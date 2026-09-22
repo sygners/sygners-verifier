@@ -156,8 +156,8 @@ archivo, así que `RPC_URL_11155111=... node src/cli.js …` también funciona.
 | `EAS_CONTRACT_ADDRESS_<chainId>` | contrato EAS de esa cadena | el oficial (ver `src/config.js`) |
 | `SCHEMA_REGISTRY_ADDRESS_<chainId>` | SchemaRegistry de esa cadena | el oficial |
 | `EAS_CONTRACT_ADDRESS` / `SCHEMA_REGISTRY_ADDRESS` | comodines | — |
-| `EAS_SCHEMA_UID` | **exige** que las atestaciones usen ese schema | sin exigir |
-| `SYGNERS_ATTESTER` | **exige** que las haya anclado esa dirección | sin exigir |
+| `EAS_SCHEMA_UID[_<chainId>]` | **exige** que las atestaciones usen ese schema | sin exigir |
+| `SYGNERS_ATTESTER[_<chainId>]` | **exige** que las haya anclado esa dirección | sin exigir |
 | `SYGNERS_SCHEMA_DEFINICION` | texto del schema esperado | el de sygners |
 | `SIN_CADENA` | `true` → solo chequeos offline | `false` |
 | `VERIFICAR_TX` | pedir los recibos de transacción | `true` |
@@ -167,8 +167,21 @@ archivo, así que `RPC_URL_11155111=... node src/cli.js …` también funciona.
 
 Cadenas con tabla propia: Ethereum (1), Ethereum Sepolia (11155111, el default
 del código de sygners), Base (8453), Base Sepolia (84532), **OP Mainnet (10,
-donde ancla la sygners de producción)**, Arbitrum One (42161), Polygon (137).
-Cualquier otra funciona configurando las tres variables `_<chainId>`.
+donde ancla la sygners de producción)**, **OP Sepolia (11155420, el entorno de
+prueba)**, Arbitrum One (42161), Polygon (137). Cualquier otra funciona
+configurando las tres variables `_<chainId>`.
+
+Las expectativas (`EAS_SCHEMA_UID`, `SYGNERS_ATTESTER`) también aceptan sufijo
+de cadena, y el sufijo gana. Sirve para tener producción y preproducción
+configuradas a la vez: cada entorno ancla con su propio relayer, y un valor
+suelto haría fallar a los paquetes del otro por una diferencia esperada. El UID
+del schema, en cambio, sale de la definición del schema y suele ser el mismo en
+todas las cadenas.
+
+Sobre las redes de prueba: el verificador comprueba el anclaje igual, pero avisa.
+Una testnet no cuesta nada de producir y puede reiniciarse entera, así que como
+prueba de que un documento existía en una fecha no vale lo mismo que una red de
+producción.
 
 > ⚠️ El `.env` de sygners usa `EAS_CONTRACT_ADDRESS=0x42…21` como default, que
 > es el predeploy de las cadenas OP-stack. En Sepolia el contrato es otro. Acá
@@ -176,13 +189,15 @@ Cualquier otra funciona configurando las tres variables `_<chainId>`.
 
 ## Verificar evidencia de la sygners de producción
 
-La plataforma ancla hoy en **OP Mainnet (chainId 10)**. Con estos tres valores
-en tu `.env` alcanza:
+La plataforma ancla hoy en **OP Mainnet (chainId 10)**, y su entorno de prueba
+en **OP Sepolia (11155420)**. Con esto en tu `.env` alcanza para los dos:
 
 ```bash
 RPC_URL_10=https://mainnet.optimism.io
+RPC_URL_11155420=https://sepolia.optimism.io
 EAS_SCHEMA_UID=0xcc6fea68545dd0ab10a1cd630ccf0f63cba74c819c3b334a22d2d1e15468dc5f
-SYGNERS_ATTESTER=0x8ad3446c381c3df420Bba1A1329F71484e7a31D8
+SYGNERS_ATTESTER_10=0x8ad3446c381c3df420Bba1A1329F71484e7a31D8
+# SYGNERS_ATTESTER_11155420=…  ← el relayer de preproducción, cuando lo confirmes
 ```
 
 Los tres están comprobados contra la cadena: el UID existe en el SchemaRegistry

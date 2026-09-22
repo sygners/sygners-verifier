@@ -20,6 +20,7 @@ export const CADENAS = {
   },
   11155111: {
     nombre: "Ethereum Sepolia",
+    prueba: true,
     eas: "0xC2679fBD37d54388Ce493F1DB75320D236e1815e",
     registry: "0x0a7E2Ff54e76B8E6659aedc9103FB21c038050D0",
     rpc: "https://ethereum-sepolia-rpc.publicnode.com",
@@ -34,8 +35,18 @@ export const CADENAS = {
     easscan: "https://base.easscan.org",
     tx: "https://basescan.org",
   },
+  11155420: {
+    nombre: "OP Sepolia",
+    prueba: true,
+    eas: "0x4200000000000000000000000000000000000021",
+    registry: "0x4200000000000000000000000000000000000020",
+    rpc: "https://sepolia.optimism.io",
+    easscan: "https://optimism-sepolia.easscan.org",
+    tx: "https://sepolia-optimism.etherscan.io",
+  },
   84532: {
     nombre: "Base Sepolia",
+    prueba: true,
     eas: "0x4200000000000000000000000000000000000021",
     registry: "0x4200000000000000000000000000000000000020",
     rpc: "https://base-sepolia-rpc.publicnode.com",
@@ -85,9 +96,22 @@ export function opciones(flags = {}) {
     estricto: flags.estricto ?? envBool("ESTRICTO", false),
     toleranciaSegundos: flags.toleranciaSegundos ?? envNum("TOLERANCIA_FECHA_SEGUNDOS", 3600),
     timeoutMs: flags.timeoutMs ?? envNum("RPC_TIMEOUT_MS", 20000),
-    schemaUidEsperado: flags.schemaUid ?? env("EAS_SCHEMA_UID") ?? null,
-    attesterEsperado: flags.attester ?? env("SYGNERS_ATTESTER") ?? null,
+    // Las expectativas se resuelven por cadena (ver `expectativas`): quien
+    // corre varios entornos —producción en una red, preproducción en otra—
+    // tiene un schema y un relayer distintos en cada una, y un único valor
+    // global haría fallar al otro entorno por una diferencia esperada.
+    schemaUidFlag: flags.schemaUid ?? null,
+    attesterFlag: flags.attester ?? null,
     rpcForzado: flags.rpc ?? null,
+  };
+}
+
+// Qué se le exige a las atestaciones de ESTA cadena. Precedencia: la línea de
+// comandos, después `<VARIABLE>_<chainId>`, y al final la variable sin sufijo.
+export function expectativas(chainId, opts = {}) {
+  return {
+    schemaUid: opts.schemaUidFlag ?? env(`EAS_SCHEMA_UID_${chainId}`) ?? env("EAS_SCHEMA_UID") ?? null,
+    attester: opts.attesterFlag ?? env(`SYGNERS_ATTESTER_${chainId}`) ?? env("SYGNERS_ATTESTER") ?? null,
   };
 }
 
@@ -109,6 +133,9 @@ export function cadenaDe(chainId, opts = {}) {
     chainId,
     nombre: base?.nombre ?? `cadena ${chainId}`,
     conocida: Boolean(base),
+    // Una red de prueba no tiene el mismo valor probatorio: sus bloques no
+    // cuestan nada de producir y la red puede reiniciarse entera.
+    prueba: Boolean(base?.prueba),
     rpcUrl,
     rpcPropio: Boolean(opts.rpcForzado || env(`RPC_URL_${chainId}`) || env("RPC_URL")),
     eas: env(`EAS_CONTRACT_ADDRESS_${chainId}`) ?? env("EAS_CONTRACT_ADDRESS") ?? base?.eas ?? null,

@@ -92,8 +92,15 @@ export function imprimirInforme(r, { archivo }) {
   }
 
   L.push(negrita("Chequeos"));
+  // Agrupados por área: los chequeos se producen intercalados (por cada
+  // firmante se miran su firma y su atestación), y repetir los encabezados
+  // hacía ilegible el informe justo donde hay más para leer.
+  const orden = Object.keys(TITULO_AREA);
+  const porArea = [...r.chequeos].sort(
+    (a, b) => orden.indexOf(a.area) - orden.indexOf(b.area),
+  );
   let areaActual = null;
-  for (const ch of r.chequeos) {
+  for (const ch of porArea) {
     if (ch.area !== areaActual) {
       areaActual = ch.area;
       L.push(`  ${gris(TITULO_AREA[areaActual] ?? areaActual)}`);

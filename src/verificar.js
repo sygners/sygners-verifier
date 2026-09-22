@@ -29,6 +29,7 @@ import {
   BYTES32_CERO,
   SCHEMA_DEFINICION,
   cadenaDe,
+  expectativas,
 } from "./config.js";
 import {
   chainIdDelNodo,
@@ -470,6 +471,7 @@ function chequearFirmasCrudas(c, m, opts) {
 async function chequearCadena(c, m, opts) {
   const chainId = Number(m?.cadena?.chainId);
   const cadena = cadenaDe(chainId, opts);
+  const esperado = expectativas(chainId, opts);
   const resultado = { cadena, atestaciones: {} };
 
   if (!cadena.conocida) {
@@ -481,6 +483,14 @@ async function chequearCadena(c, m, opts) {
     );
   } else {
     c.ok("cadena", "cadena.conocida", "La cadena del manifiesto es conocida", `${cadena.nombre} (chainId ${chainId})`);
+  }
+  if (cadena.prueba) {
+    c.aviso(
+      "cadena",
+      "cadena.prueba",
+      "La cadena es una red de producción",
+      `${cadena.nombre} es una RED DE PRUEBA. El anclaje se comprueba igual y todo lo de abajo vale, pero una testnet no cuesta nada de producir y puede reiniciarse entera: como prueba de que el documento existía en esa fecha, no tiene el mismo valor que una red de producción. Un paquete que tenga que sostenerse frente a un tercero debería estar anclado en una red de producción.`,
+    );
   }
   if (!cadena.rpcPropio) {
     c.aviso(
@@ -567,8 +577,8 @@ async function chequearCadena(c, m, opts) {
         `En la cadena: ${d.subject}. En el manifiesto: ${m?.emisor?.wallet}.`,
       );
     }
-    await chequearSchema(c, prov, cadena, registro.schema, opts);
-    chequearAttester(c, registro.attester, opts, "registro");
+    await chequearSchema(c, prov, cadena, registro.schema, esperado);
+    chequearAttester(c, registro.attester, esperado, "registro");
   }
 
   // 4.2 Cada firma.
@@ -663,7 +673,7 @@ async function chequearCadena(c, m, opts) {
         `Schema ${a.schema}, distinto del ${registro.schema} del registro.`,
       );
     }
-    chequearAttester(c, a.attester, opts, `firma.${i}`, etiqueta);
+    chequearAttester(c, a.attester, esperado, `firma.${i}`, etiqueta);
 
     // La fecha que declara el manifiesto contra la que quedó en el bloque.
     const declarada = fecha(f.firmadoEl);
@@ -753,31 +763,31 @@ async function leerUna(c, prov, cadena, uid, id, titulo) {
   }
 }
 
-function chequearAttester(c, attester, opts, id, etiqueta) {
+function chequearAttester(c, attester, esperado, id, etiqueta) {
   const quien = etiqueta ? `${etiqueta}: ` : "";
-  if (!opts.attesterEsperado) {
+  if (!esperado.attester) {
     c.info("cadena", `${id}.attester`, `${quien}quién ancló`, `${attester} (configurá SYGNERS_ATTESTER para exigir una en particular)`);
     return;
   }
   c.segun(
-    dir(attester) && dir(attester) === dir(opts.attesterEsperado),
+    dir(attester) && dir(attester) === dir(esperado.attester),
     "cadena",
     `${id}.attester`,
     `${quien}la ancló el atestador esperado`,
     attester,
-    `La ancló ${attester}, y esperabas ${opts.attesterEsperado}.`,
+    `La ancló ${attester}, y esperabas ${esperado.attester}.`,
   );
 }
 
-async function chequearSchema(c, prov, cadena, schemaUid, opts) {
-  if (opts.schemaUidEsperado) {
+async function chequearSchema(c, prov, cadena, schemaUid, esperado) {
+  if (esperado.schemaUid) {
     c.segun(
-      schemaUid?.toLowerCase() === opts.schemaUidEsperado.toLowerCase(),
+      schemaUid?.toLowerCase() === esperado.schemaUid.toLowerCase(),
       "cadena",
       "schema.uid",
       "Las atestaciones usan el schema esperado",
       schemaUid,
-      `Usan ${schemaUid} y esperabas ${opts.schemaUidEsperado}.`,
+      `Usan ${schemaUid} y esperabas ${esperado.schemaUid}.`,
     );
   } else {
     c.info("cadena", "schema.uid", "Schema usado", `${schemaUid} (configurá EAS_SCHEMA_UID para exigir uno)`);
