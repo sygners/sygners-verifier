@@ -1,0 +1,22 @@
+{
+  "name": "sygners-verifier",
+  "version": "1.0.0",
+  "description": "Verificador independiente de los archivos de evidencia .zip de sygners. No depende de la plataforma: lee el zip, recalcula el hash y coteja las atestaciones contra la cadena por RPC.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "sygners-verificar": "./src/cli.js"
+  },
+  "scripts": {
+    "verificar": "node src/cli.js",
+    "fixtures": "node pruebas/armar-fixtures.js",
+    "prueba": "node pruebas/prueba.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ethers": "^6.13.5",
+    "fflate": "^0.8.2"
+  }
+}

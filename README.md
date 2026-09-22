@@ -1,0 +1,193 @@
+# sygners-verifier
+
+Verificador independiente de los archivos de evidencia `.zip` que entrega
+[sygners](https://github.com/sygners/sygners).
+
+**No depende de la plataforma.** No hay una sola llamada a sygners en todo el
+programa. Las únicas dos fuentes son el `.zip` que te pasaron y un nodo RPC de
+la cadena que el propio manifiesto declara. Esa es toda la razón de existir de
+este repo: una evidencia que necesite que su emisor siga en línea para poder
+comprobarse no es evidencia.
+
+```bash
+npm install
+node src/cli.js sygners-evidencia-contrato.zip
+```
+
+---
+
+## Qué hay adentro de un paquete de evidencia
+
+Cuatro archivos, tal como los arma `src/lib/archivo-evidencia.ts` de sygners:
+
+| archivo | qué es |
+|---|---|
+| `<documento>` | el documento original, tal como se firmó (el nombre es el suyo) |
+| `constancia.pdf` | la constancia de firma: hashes, wallets, fechas |
+| `manifiesto.json` | los mismos hechos en JSON, armados por el servidor |
+| `LEEME.txt` | las instrucciones en prosa, con el hash escrito adentro |
+
+## Qué comprueba este verificador
+
+**Sin red (siempre):**
+
+1. El `.zip` abre y trae las cuatro piezas, con un solo documento adentro.
+2. El manifiesto es JSON válido, de formato conocido (`formato: 1`), con todos
+   sus campos, fechas coherentes y todos los firmantes en `SIGNED`.
+3. **El SHA-256 del documento es el que declara el manifiesto.** Es *el*
+   chequeo: si falla, el archivo que viene adentro no es el que se firmó.
+4. El tamaño, el nombre y el hash repetido en `LEEME.txt` concuerdan.
+5. **Que la evidencia no sea simulada.** Cuando a sygners le falta el relayer,
+   el RPC o el UID del schema, no ancla nada: genera UIDs deterministas
+   (`keccak256("uid:register:<id>")`) para que el flujo local siga siendo
+   trazable. Un paquete así se ve idéntico a uno real — salvo que sus UIDs se
+   pueden **recalcular**, y eso es lo que se hace acá, sin tocar la red.
+
+**Contra la cadena (por RPC, salvo `--sin-cadena`):**
+
+6. El nodo declara el mismo `chainId` que el manifiesto, o no se coteja nada.
+7. La atestación del **registro** existe, no está revocada ni vencida, y sus
+   datos decodificados con el schema de sygners dicen: el mismo hash de
+   documento, `action = REGISTER`, el correo y la wallet del emisor.
+8. La atestación de **cada firma** existe, dice `action = SIGN`, sobre el mismo
+   hash de documento, con el correo y la wallet de ese firmante, con `sigHash`
+   distinto de cero, **referenciando (`refUID`) al registro** y bajo el mismo
+   schema.
+9. El schema on-chain es, textualmente,
+   `bytes32 documentHash,string action,string email,address subject,bytes32 sigHash`
+   — leído del SchemaRegistry de esa cadena, no asumido.
+10. Las transacciones existen, salieron bien (`status = 1`) y fueron al
+    contrato de EAS.
+11. La fecha que declara el manifiesto y la del bloque están cerca (aviso).
+12. Opcional y lo más fuerte que podés exigir: que el **atestador** y el **UID
+    del schema** sean los que vos esperás (`SYGNERS_ATTESTER`, `EAS_SCHEMA_UID`).
+
+## Qué NO comprueba, y por qué
+
+- **Las firmas EIP-712 en sí.** On-chain queda la *huella* de cada firma
+  (`sigHash = keccak256(firma)`), no la firma. El manifiesto tampoco la lleva.
+  Con el paquete en la mano se puede probar que esa wallet quedó anclada
+  firmando ese documento en esa fecha; recuperar la dirección desde la firma
+  cruda requiere un dato que el zip no contiene.
+- **Quién es la persona detrás de la wallet.** Eso lo cubre el informe de
+  verificación de identidad de sygners, que es otro papel y otro flujo.
+- **Que el atestador sea sygners**, salvo que vos se lo digas con
+  `SYGNERS_ATTESTER`. Sin esa variable, el verificador informa quién ancló y no
+  opina: cualquiera puede escribir una atestación con cualquier contenido.
+
+## Veredictos y códigos de salida
+
+| veredicto | salida | significa |
+|---|---|---|
+| `VERIFICA` | 0 | el documento es el anclado y la cadena dice lo que el manifiesto dice |
+| `VERIFICA PARCIALMENTE (sin cadena)` | 0 | consistente consigo mismo; no se cotejó contra la red |
+| `EVIDENCIA SIMULADA` | 1 | salió de una instancia sin cadena: no prueba nada frente a un tercero |
+| `NO VERIFICA` | 1 | falló al menos un chequeo bloqueante |
+
+## Uso
+
+```bash
+node src/cli.js <archivo.zip> [opciones]
+
+  --sin-cadena          solo chequeos offline (veredicto parcial)
+  --json                informe en JSON por stdout
+  --extraer <carpeta>   además, escribe el documento, la constancia y el manifiesto
+  --rpc <url>           RPC a usar, por encima del entorno
+  --schema-uid <0x…>    UID de schema EAS exigido
+  --attester <0x…>      dirección que tuvo que anclar
+  --sin-tx              no pedir los recibos de transacción
+  --estricto            los avisos también hacen fallar
+  --tolerancia <seg>    diferencia admitida entre la fecha declarada y la del bloque
+  --env <archivo>       .env a usar
+```
+
+Instalado global (`npm link` o `npm i -g .`) queda como `sygners-verificar`.
+
+Para automatizar:
+
+```bash
+node src/cli.js evidencia.zip --json | jq -r '.veredicto, (.chequeos[] | select(.estado=="falla") | .titulo)'
+```
+
+## Variables de entorno
+
+Todas son opcionales: el verificador corre sin `.env`. Copiá `.env.example` a
+`.env` y completá lo que quieras. Lo que ya esté en el entorno le gana al
+archivo, así que `RPC_URL_11155111=... node src/cli.js …` también funciona.
+
+| variable | para qué | default |
+|---|---|---|
+| `RPC_URL_<chainId>` | el nodo de esa cadena; es el que manda | nodo público de publicnode.com |
+| `RPC_URL` | comodín, para cualquier cadena sin el anterior | — |
+| `EAS_CONTRACT_ADDRESS_<chainId>` | contrato EAS de esa cadena | el oficial (ver `src/config.js`) |
+| `SCHEMA_REGISTRY_ADDRESS_<chainId>` | SchemaRegistry de esa cadena | el oficial |
+| `EAS_CONTRACT_ADDRESS` / `SCHEMA_REGISTRY_ADDRESS` | comodines | — |
+| `EAS_SCHEMA_UID` | **exige** que las atestaciones usen ese schema | sin exigir |
+| `SYGNERS_ATTESTER` | **exige** que las haya anclado esa dirección | sin exigir |
+| `SYGNERS_SCHEMA_DEFINICION` | texto del schema esperado | el de sygners |
+| `SIN_CADENA` | `true` → solo chequeos offline | `false` |
+| `VERIFICAR_TX` | pedir los recibos de transacción | `true` |
+| `TOLERANCIA_FECHA_SEGUNDOS` | fecha declarada vs. fecha del bloque | `3600` |
+| `RPC_TIMEOUT_MS` | timeout de cada pedido al RPC | `20000` |
+| `ESTRICTO` | los avisos también hacen fallar | `false` |
+
+Cadenas con tabla propia: Ethereum (1), Ethereum Sepolia (11155111, el default
+de sygners), Base (8453), Base Sepolia (84532), OP Mainnet (10), Arbitrum One
+(42161), Polygon (137). Cualquier otra funciona configurando las tres variables
+`_<chainId>`.
+
+> ⚠️ El `.env` de sygners usa `EAS_CONTRACT_ADDRESS=0x42…21` como default, que
+> es el predeploy de las cadenas OP-stack. En Sepolia el contrato es otro. Acá
+> cada cadena usa el suyo: **no copies el `.env` de la plataforma**.
+
+## Dos variables que cambian lo que el verificador puede afirmar
+
+Sin ellas, el informe prueba que el documento es el que se ancló y que las
+atestaciones están donde el manifiesto dice. Con ellas, además ata esa evidencia
+a sygners:
+
+```bash
+EAS_SCHEMA_UID=0x…      # lo imprime `npm run eas:register-schema` en la plataforma
+SYGNERS_ATTESTER=0x…    # la dirección del relayer (el `attester` de cualquier
+                        # atestación suya, visible en easscan)
+```
+
+Conseguilos una vez, de una fuente que no sea el propio paquete que estás
+verificando, y guardalos: son el ancla de confianza.
+
+## Comprobación a mano, sin este programa
+
+Todo lo de arriba se puede hacer con `unzip`, `shasum` y un explorador. El
+verificador solo lo hace completo y sin olvidarse de nada:
+
+```bash
+unzip -o evidencia.zip -d evidencia/
+shasum -a 256 "evidencia/contrato.txt"        # tiene que dar el hash del manifiesto
+jq -r '.documento.hash, .cadena.registroUid' evidencia/manifiesto.json
+# y buscar ese UID en https://sepolia.easscan.org/attestation/view/<uid>
+```
+
+## Desarrollo
+
+```bash
+npm run fixtures   # arma pruebas/fixtures/*.zip (simulada, manipulada, inventada)
+npm run prueba     # corre la prueba: offline + camino positivo y negativos
+                   # contra un nodo JSON-RPC falso. No necesita red ni sygners.
+```
+
+Estructura:
+
+```
+src/cli.js         línea de comandos, códigos de salida
+src/verificar.js   los chequeos y el veredicto
+src/eas.js         lectura de EAS por RPC (getAttestation, getSchema, recibos)
+src/simulado.js    detección de los UIDs del modo sin cadena
+src/zip.js         apertura del paquete (nada tira por estar incompleto)
+src/config.js      cadenas, contratos, RPC y opciones
+src/informe.js     el informe en pantalla y en JSON
+src/hash.js        SHA-256, igual que en la plataforma
+src/env.js         lectura del .env, sin dependencias
+```
+
+Dependencias: `ethers` (leer la cadena) y `fflate` (abrir el zip). Nada más, a
+propósito: esto tiene que poder instalarse dentro de diez años.

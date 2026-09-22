@@ -1,0 +1,4 @@
+node_modules/
+.env
+pruebas/fixtures/
+extraido/
