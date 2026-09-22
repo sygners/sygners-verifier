@@ -12,10 +12,21 @@ node src/cli.js evidencia.zip
 
 Un solo argumento. Todo lo que se ajusta vive en el `.env`.
 
-La salida es un informe estructurado por sujeto: el paquete, el documento, el
-anclaje en la cadena y **un bloque por firmante** con todo lo suyo junto —lo que
-declara el manifiesto, lo que prueba su firma y lo que dice la cadena—, cada
-chequeo con el dato con el que se resolvió.
+La salida es un informe estructurado por sujeto, con cada chequeo acompañado del
+dato con el que se resolvió:
+
+```
+ Veredicto    VERIFICA
+ Chequeos     42 ok · 0 fallas · 2 avisos · 0 omitidos
+
+ 1. PAQUETE                      piezas del zip y forma del manifiesto
+ 2. DOCUMENTO                    el SHA-256 y lo que el manifiesto declara
+ 3. ANCLAJE EN LA CADENA         registro, schema, atestador, transacción
+ 4. ESQUEMA DE FIRMA (EIP-712)   dominio y tipos
+ 5. FIRMANTE 1 DE N — email      todo lo suyo junto: manifiesto, firma y cadena
+ 6. CLAVES PRIVADAS              qué confirmó cada una, o que no se aportaron
+ RESULTADO                       veredicto, fallas y avisos
+```
 
 ## Qué comprueba
 
@@ -48,11 +59,15 @@ chequeo con el dato con el que se resolvió.
 - Si configuraste `SYGNERS_ATTESTER` y `EAS_SCHEMA_UID`, que sean esos.
 - Si la cadena es una red de prueba, lo avisa.
 
-**Si aportás claves privadas** (`PK_SIGNER*`)
+**Quién controla cada wallet** (`PK_SIGNER*`, opcional)
 
-De cada una se deriva la dirección y se busca entre las wallets del paquete.
-Acredita **control de la wallet, no identidad**. La clave nunca firma nada ni
-aparece en la salida.
+Si te entregan la clave privada de un firmante, de cada una se deriva la
+dirección y se busca entre las wallets del paquete. La clave nunca firma nada ni
+aparece en la salida, y acredita **control de la wallet, no identidad**.
+
+Si no se aporta ninguna, el informe **lo avisa** y nombra a los firmantes que
+quedaron sin confirmar: el paquete prueba que ciertas wallets firmaron, no quién
+las controla hoy, y un `VERIFICA` a secas se lee como si probara las dos cosas.
 
 ## Veredictos
 
@@ -70,7 +85,9 @@ Todo en `.env` (ver `.env.example`): `RPC_URL_<chainId>`, `EAS_SCHEMA_UID`,
 no estén en la tabla, `EAS_CONTRACT_ADDRESS_<chainId>` y
 `SCHEMA_REGISTRY_ADDRESS_<chainId>`.
 
-Para la sygners de producción alcanza con:
+Cadenas conocidas: Ethereum (1), Sepolia (11155111), OP Mainnet (10), OP Sepolia
+(11155420), Base (8453), Base Sepolia (84532), Arbitrum One (42161) y
+Polygon (137). Para la sygners de producción alcanza con:
 
 ```bash
 RPC_URL_10=https://mainnet.optimism.io
