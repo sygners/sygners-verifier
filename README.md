@@ -77,21 +77,6 @@ Cuatro archivos, tal como los arma `src/lib/archivo-evidencia.ts` de sygners:
 15. Opcional y lo más fuerte que podés exigir: que el **atestador** y el **UID
     del schema** sean los que vos esperás (`SYGNERS_ATTESTER`, `EAS_SCHEMA_UID`).
 
-## Qué NO comprueba, y por qué
-
-- **Las firmas de los paquetes viejos (`formato: 1`).** Ahí on-chain queda solo
-  la *huella* (`sigHash = keccak256(firma)`) y el manifiesto no lleva la firma,
-  así que no hay nada que recuperar: de esos paquetes se prueba que la wallet
-  quedó *anclada* firmando el documento, no que produjo la firma. Desde el
-  `formato: 2` esto sí se comprueba, y el informe lo dice en cada caso. Un
-  firmante suelto sin firma cruda dentro de un paquete de formato 2 sale como
-  aviso, no como falla: es una fila anterior al cambio, no un paquete roto.
-- **Quién es la persona detrás de la wallet.** Eso lo cubre el informe de
-  verificación de identidad de sygners, que es otro papel y otro flujo.
-- **Que el atestador sea sygners**, salvo que vos se lo digas con
-  `SYGNERS_ATTESTER`. Sin esa variable, el verificador informa quién ancló y no
-  opina: cualquiera puede escribir una atestación con cualquier contenido.
-
 ## Formatos de manifiesto
 
 | formato | desde | qué trae de más |
