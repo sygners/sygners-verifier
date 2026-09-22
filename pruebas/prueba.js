@@ -384,8 +384,10 @@ console.log("\n--- claves aportadas ---");
   check("el sufijo de la variable es libre (PK_SIGNER_ANA)", tiene(nombreLibre, "clave.PK_SIGNER_ANA", "ok"));
 
   const sinClaves = await conClaves({});
-  check("sin claves aportadas no se agrega ningún chequeo",
-        !sinClaves.chequeos.some((x) => x.area === "claves") && sinClaves.veredicto === "VERIFICADO");
+  check("sin claves aportadas, el informe lo avisa",
+        tiene(sinClaves, "claves.sin-aportar", "aviso") && sinClaves.veredicto === "VERIFICADO", sinClaves.veredicto);
+  check("   y el aviso nombra a los firmantes sin confirmar",
+        sinClaves.chequeos.find((x) => x.id === "claves.sin-aportar")?.detalle.includes("firmante@example.com"));
 }
 
 console.log(`\n${fallas === 0 ? "todo en verde" : `${fallas} FALLAS`}\n`);

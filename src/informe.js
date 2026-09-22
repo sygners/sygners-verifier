@@ -194,8 +194,9 @@ export function imprimirInforme(r, { archivo }) {
 
   // ── Claves ──
   if (sec.claves.length) {
-    titulo(`${n++}. CLAVES PRIVADAS APORTADAS`);
-    L.push(gris(" Acreditan control de la wallet, no identidad."));
+    const aportadas = sec.claves.some((x) => x.id.startsWith("clave."));
+    titulo(`${n++}. CLAVES PRIVADAS DE LOS FIRMANTES`);
+    if (aportadas) L.push(gris(" Acreditan control de la wallet, no identidad."));
     bloque(sec.claves);
   }
 

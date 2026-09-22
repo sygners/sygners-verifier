@@ -480,9 +480,22 @@ function chequearFirmasCrudas(c, m) {
 // control de la wallet, no quién es la persona.
 function chequearClaves(c, m) {
   const claves = clavesAportadas();
-  if (claves.length === 0) return;
-
   const firmantes = Array.isArray(m.firmantes) ? m.firmantes : [];
+
+  // Sin claves el informe tiene que decirlo, no simplemente no hablar del tema:
+  // "VERIFICA" sin esta línea se lee como si se hubiera comprobado quién es
+  // cada firmante, y lo que se comprobó es que CIERTAS WALLETS firmaron.
+  if (claves.length === 0) {
+    const quienes = firmantes.map((f) => f.email).filter(Boolean).join(", ");
+    c.aviso(
+      "claves",
+      "claves.sin-aportar",
+      "No se aportaron claves privadas de los firmantes",
+      `Queda probado que las wallets declaradas firmaron este documento${quienes ? ` (${quienes})` : ""}, pero no quién las controla hoy. Para confirmarlo, poné la clave de cada firmante en PK_SIGNER1, PK_SIGNER2… del .env; o, mejor, pedile a cada uno que FIRME un texto que elijas vos — prueba lo mismo sin que nadie entregue su clave. En cualquier caso acredita control de la wallet, no identidad.`,
+    );
+    return;
+  }
+
   const emisor = m?.emisor;
   let coincidencias = 0;
 
