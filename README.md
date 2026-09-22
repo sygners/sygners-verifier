@@ -12,6 +12,11 @@ node src/cli.js evidencia.zip
 
 Un solo argumento. Todo lo que se ajusta vive en el `.env`.
 
+La salida es un informe estructurado por sujeto: el paquete, el documento, el
+anclaje en la cadena y **un bloque por firmante** con todo lo suyo junto —lo que
+declara el manifiesto, lo que prueba su firma y lo que dice la cadena—, cada
+chequeo con el dato con el que se resolvió.
+
 ## Qué comprueba
 
 **Sin tocar la red**

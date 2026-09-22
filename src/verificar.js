@@ -579,7 +579,7 @@ async function chequearCadena(c, m) {
     c.aviso(
       "cadena",
       "cadena.prueba",
-      "La cadena es una red de producción",
+      "La evidencia está anclada en una RED DE PRUEBA",
       `${cadena.nombre} es una RED DE PRUEBA. El anclaje se comprueba igual y todo lo de abajo vale, pero una testnet no cuesta nada de producir y puede reiniciarse entera: como prueba de que el documento existía en esa fecha, no tiene el mismo valor que una red de producción. Un paquete que tenga que sostenerse frente a un tercero debería estar anclado en una red de producción.`,
     );
   }
@@ -702,7 +702,7 @@ async function chequearCadena(c, m) {
       hashesIguales(d.documentHash, m?.documento?.hash),
       "firmas",
       `firma.${i}.hash`,
-      `${etiqueta}: firmó ESTE documento`,
+      `${etiqueta}: el hash de su atestación es el de este documento`,
       d.documentHash,
       `Su firma está anclada sobre ${d.documentHash}, que no es el documento de este paquete.`,
     );
@@ -974,15 +974,21 @@ function armarResultado(c, ctx) {
     chequeos: c.lista,
     operacion: m
       ? {
+          formato: m.formato ?? null,
           documentoId: m.documento?.id ?? null,
           titulo: m.documento?.titulo ?? null,
           archivo: ctx.zip?.nombreDocumento ?? null,
+          tamano: ctx.zip?.documento?.length ?? m.documento?.tamano ?? null,
           hashDeclarado: m.documento?.hash ?? null,
           hashCalculado: ctx.hashCalculado ?? null,
           chainId: Number.isFinite(cadenaId) ? cadenaId : null,
           red: cfg?.nombre ?? null,
           registroUid: m.cadena?.registroUid ?? null,
           registroUrl: cfg?.urlAtestacion(m.cadena?.registroUid) ?? null,
+          // Los dos salen de la cadena, no del paquete: son lo que se
+          // comprobó, no lo que el manifiesto afirma.
+          atestador: ctx.cadena?.atestaciones?.registro?.attester ?? null,
+          schemaUid: ctx.cadena?.atestaciones?.registro?.schema ?? null,
           emisor: m.emisor ?? null,
           firmantes: (m.firmantes ?? []).map((f) => ({
             ...f,
