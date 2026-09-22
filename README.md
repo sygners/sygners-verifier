@@ -132,28 +132,45 @@ archivo, así que `RPC_URL_11155111=... node src/cli.js …` también funciona.
 | `ESTRICTO` | los avisos también hacen fallar | `false` |
 
 Cadenas con tabla propia: Ethereum (1), Ethereum Sepolia (11155111, el default
-de sygners), Base (8453), Base Sepolia (84532), OP Mainnet (10), Arbitrum One
-(42161), Polygon (137). Cualquier otra funciona configurando las tres variables
-`_<chainId>`.
+del código de sygners), Base (8453), Base Sepolia (84532), **OP Mainnet (10,
+donde ancla la sygners de producción)**, Arbitrum One (42161), Polygon (137).
+Cualquier otra funciona configurando las tres variables `_<chainId>`.
 
 > ⚠️ El `.env` de sygners usa `EAS_CONTRACT_ADDRESS=0x42…21` como default, que
 > es el predeploy de las cadenas OP-stack. En Sepolia el contrato es otro. Acá
 > cada cadena usa el suyo: **no copies el `.env` de la plataforma**.
 
-## Dos variables que cambian lo que el verificador puede afirmar
+## Verificar evidencia de la sygners de producción
 
-Sin ellas, el informe prueba que el documento es el que se ancló y que las
-atestaciones están donde el manifiesto dice. Con ellas, además ata esa evidencia
-a sygners:
+La plataforma ancla hoy en **OP Mainnet (chainId 10)**. Con estos tres valores
+en tu `.env` alcanza:
 
 ```bash
-EAS_SCHEMA_UID=0x…      # lo imprime `npm run eas:register-schema` en la plataforma
-SYGNERS_ATTESTER=0x…    # la dirección del relayer (el `attester` de cualquier
-                        # atestación suya, visible en easscan)
+RPC_URL_10=https://mainnet.optimism.io
+EAS_SCHEMA_UID=0xcc6fea68545dd0ab10a1cd630ccf0f63cba74c819c3b334a22d2d1e15468dc5f
+SYGNERS_ATTESTER=0x8ad3446c381c3df420Bba1A1329F71484e7a31D8
 ```
 
-Conseguilos una vez, de una fuente que no sea el propio paquete que estás
-verificando, y guardalos: son el ancla de confianza.
+Los tres están comprobados contra la cadena: el UID existe en el SchemaRegistry
+de OP y su definición es exactamente la de sygners; el atestador es el que firma
+todas las atestaciones de ese schema. Ninguno es secreto — la red es pública, el
+schema está publicado y el atestador figura en cada atestación.
+
+`EAS_CONTRACT_ADDRESS_10` y `SCHEMA_REGISTRY_ADDRESS_10` no hacen falta: los
+defaults del verificador para OP (`0x42…21` y `0x42…20`) ya son los correctos.
+
+> **El verificador nunca necesita la clave privada del relayer.** Lee la cadena,
+> no escribe en ella. Si un `.env` de verificación tiene una clave privada
+> adentro, es una clave privada de más en el disco.
+
+### Por qué esas dos variables importan
+
+Sin `EAS_SCHEMA_UID` y `SYGNERS_ATTESTER` el informe prueba que el documento es
+el que se ancló y que las atestaciones están donde el manifiesto dice — pero no
+que las haya anclado sygners: cualquiera puede escribir una atestación con
+cualquier contenido. Con ellas, una atestación bajo otro schema o anclada por
+otra wallet se rechaza. Conseguilas una vez, de una fuente que no sea el propio
+paquete que estás verificando, y guardalas: son el ancla de confianza.
 
 ## Comprobación a mano, sin este programa
 
@@ -164,7 +181,7 @@ verificador solo lo hace completo y sin olvidarse de nada:
 unzip -o evidencia.zip -d evidencia/
 shasum -a 256 "evidencia/contrato.txt"        # tiene que dar el hash del manifiesto
 jq -r '.documento.hash, .cadena.registroUid' evidencia/manifiesto.json
-# y buscar ese UID en https://sepolia.easscan.org/attestation/view/<uid>
+# y buscar ese UID en https://optimism.easscan.org/attestation/view/<uid>
 ```
 
 ## Desarrollo
