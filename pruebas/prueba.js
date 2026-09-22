@@ -302,5 +302,78 @@ console.log("\n--- formato 2 (firma cruda) ---");
   check("un manifiesto de formato 1 omite el bloque de firma cruda", tiene(r1, "firma.crudas", "omitido") && r1.veredicto === "VERIFICADO");
 }
 
+
+// ── 6. Las claves privadas aportadas ─────────────────────────────────────────
+//
+// Lo que se prueba acá no es la criptografía —es derivar una dirección— sino la
+// política: qué se considera confirmación, qué se considera aviso y qué hace
+// fallar. Y que la clave no aparezca en ningún lado de la salida.
+console.log("\n--- claves aportadas ---");
+{
+  const w = Wallet.createRandom();
+  const mensaje = {
+    documentId: "doc-1", documentHash: HASH, signerEmail: "firmante@example.com",
+    statement: DECLARACION, timestamp: Math.floor(FIRMADO.getTime() / 1000),
+  };
+  const firma = await w.signTypedData(dominioCanonico(CHAIN_ID), TIPOS_FIRMA, mensaje);
+  const sigHash = keccak256(firma);
+  const paquete = armar({
+    ...manifiesto(), formato: 2,
+    eip712: { dominio: dominioCanonico(CHAIN_ID), tipos: TIPOS_FIRMA },
+    firmantes: [{
+      email: "firmante@example.com", wallet: w.address, firmadoEl: FIRMADO.toISOString(),
+      attestationUid: FIRMA_UID, txHash: FIRMA_TX, estado: "SIGNED", mensaje, firma, sigHash,
+    }],
+  });
+  const cadenaConFirma = estadoCadena({
+    atestaciones: {
+      [FIRMA_UID]: atestacion({
+        uid: FIRMA_UID, schema: SCHEMA_UID, time: Math.floor(FIRMADO.getTime() / 1000) + 12,
+        recipient: w.address, attester: ATTESTER, refUID: REG_UID,
+        data: datosSygners({ documentHash: HASH, action: "SIGN", email: "firmante@example.com", subject: w.address, sigHash }),
+      }),
+    },
+  });
+
+  const conClaves = async (vars, zip = paquete, estado = cadenaConFirma) => {
+    const previas = { ...process.env };
+    for (const k of Object.keys(process.env)) if (k.startsWith("PK_SIGNER")) delete process.env[k];
+    Object.assign(process.env, vars);
+    try {
+      return await contra(estado, zip);
+    } finally {
+      for (const k of Object.keys(process.env)) if (k.startsWith("PK_SIGNER")) delete process.env[k];
+      Object.assign(process.env, previas);
+    }
+  };
+
+  const r = await conClaves({ PK_SIGNER1: w.privateKey });
+  check("la clave del firmante lo confirma", r.veredicto === "VERIFICADO" && tiene(r, "clave.PK_SIGNER1", "ok"), r.veredicto);
+  check("y la clave no aparece en ningún lado de la salida",
+        !JSON.stringify(r).toLowerCase().includes(w.privateKey.slice(2).toLowerCase()));
+
+  const sinPrefijo = await conClaves({ PK_SIGNER1: w.privateKey.slice(2) });
+  check("una clave sin el 0x adelante también se acepta", tiene(sinPrefijo, "clave.PK_SIGNER1", "ok"));
+
+  const ajena = await conClaves({ PK_SIGNER1: Wallet.createRandom().privateKey });
+  check("una clave que no es de nadie del paquete no verifica",
+        ajena.veredicto === "NO_VERIFICA" && tiene(ajena, "claves.ninguna", "falla"));
+
+  const mixta = await conClaves({ PK_SIGNER1: w.privateKey, PK_SIGNER2: Wallet.createRandom().privateKey });
+  check("con una que sí y una que no, la que no es aviso y no invalida",
+        mixta.veredicto === "VERIFICADO" && tiene(mixta, "clave.PK_SIGNER2", "aviso"), mixta.veredicto);
+
+  const rota = await conClaves({ PK_SIGNER1: w.privateKey, PK_SIGNER2: "no-es-una-clave" });
+  check("una variable con basura adentro falla", tiene(rota, "clave.PK_SIGNER2", "falla"));
+  check("   y tampoco imprime lo que le pusieron", !JSON.stringify(rota).includes("no-es-una-clave"));
+
+  const nombreLibre = await conClaves({ PK_SIGNER_ANA: w.privateKey });
+  check("el sufijo de la variable es libre (PK_SIGNER_ANA)", tiene(nombreLibre, "clave.PK_SIGNER_ANA", "ok"));
+
+  const sinClaves = await conClaves({});
+  check("sin claves aportadas no se agrega ningún chequeo",
+        !sinClaves.chequeos.some((x) => x.area === "claves") && sinClaves.veredicto === "VERIFICADO");
+}
+
 console.log(`\n${fallas === 0 ? "todo en verde" : `${fallas} FALLAS`}\n`);
 process.exit(fallas === 0 ? 0 : 1);

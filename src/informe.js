@@ -21,6 +21,7 @@ const TITULO_AREA = {
   documento: "El documento",
   cadena: "La cadena",
   firmas: "Las firmas",
+  claves: "Las claves aportadas",
 };
 
 const VEREDICTO = {

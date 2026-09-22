@@ -23,6 +23,7 @@ import {
 } from "./firma.js";
 import { abrirEvidencia, NOMBRE_CONSTANCIA, NOMBRE_LEEME, NOMBRE_MANIFIESTO } from "./zip.js";
 import { detectarSimulado } from "./simulado.js";
+import { clavesAportadas } from "./claves.js";
 import {
   ACCION_FIRMA,
   ACCION_REGISTRO,
@@ -467,6 +468,94 @@ function chequearFirmasCrudas(c, m, opts) {
   }
 }
 
+// ── 3.6 Las claves privadas aportadas ────────────────────────────────────────
+//
+// Opcional, y solo si alguien las entrega (`PK_SIGNER…` en el entorno). Cierra
+// el extremo que al paquete le falta: la evidencia prueba que CIERTA WALLET
+// firmó; la clave prueba que quien te la dio controla esa wallet.
+//
+// ⚠️ No prueba identidad. Una clave se copia, se presta y se roba: acredita
+// control de la wallet, no quién es la persona.
+function chequearClaves(c, m) {
+  const claves = clavesAportadas();
+  if (claves.length === 0) return;
+
+  const firmantes = Array.isArray(m.firmantes) ? m.firmantes : [];
+  const emisor = m?.emisor;
+  let coincidencias = 0;
+
+  for (const k of claves) {
+    if (k.error) {
+      c.falla("claves", `clave.${k.nombre}`, `${k.nombre}: es una clave privada`, k.error);
+      continue;
+    }
+
+    const firmante = firmantes.find((f) => mismaDireccion(f.wallet, k.direccion));
+    if (firmante) {
+      coincidencias++;
+      // Si además se recuperó la dirección de su firma, la cadena queda
+      // completa: esta clave controla la wallet que produjo esa firma.
+      const recuperada = c.lista.find(
+        (x) =>
+          x.id === `firma.${firmantes.indexOf(firmante)}.recuperada` && x.estado === "ok",
+      );
+      c.ok(
+        "claves",
+        `clave.${k.nombre}`,
+        `${k.nombre}: controla la wallet de ${firmante.email}`,
+        recuperada
+          ? `${k.direccion} — y esa wallet es la que produjo la firma, así que quien aportó esta clave es quien firmó. Acredita control de la wallet, no identidad.`
+          : `${k.direccion} — es la wallet declarada de ese firmante. La firma cruda no está en el paquete, así que el vínculo con la firma lo sostiene la atestación on-chain.`,
+      );
+      continue;
+    }
+
+    if (emisor && mismaDireccion(emisor.wallet, k.direccion)) {
+      coincidencias++;
+      c.ok(
+        "claves",
+        `clave.${k.nombre}`,
+        `${k.nombre}: controla la wallet del emisor`,
+        `${k.direccion} — es la wallet del REGISTRO, que no firma nada. Confirma quién creó la operación, no quién la firmó.`,
+      );
+      continue;
+    }
+
+    c.aviso(
+      "claves",
+      `clave.${k.nombre}`,
+      `${k.nombre}: corresponde a alguna wallet de este paquete`,
+      `Deriva en ${k.direccion}, que no es ninguna de las wallets de esta operación. Si esperabas que fuera la de un firmante, no lo es; si el mismo .env se usa para varios paquetes, es de otro.`,
+    );
+  }
+
+  // Todas erradas es distinto de algunas erradas: un .env compartido entre
+  // varios paquetes explica lo segundo, no lo primero.
+  const validas = claves.filter((k) => !k.error).length;
+  if (validas > 0 && coincidencias === 0) {
+    c.falla(
+      "claves",
+      "claves.ninguna",
+      "Al menos una clave aportada corresponde a este paquete",
+      `Se aportaron ${validas} clave(s) y ninguna controla una wallet de esta operación. O son de otro paquete, o las wallets de este no son las que creías.`,
+    );
+  }
+
+  // A quién no se confirmó. No es una falla —las claves son opcionales— pero
+  // callarlo dejaría leer "verifica" como "se confirmaron todos".
+  const sinConfirmar = firmantes.filter(
+    (f) => !claves.some((k) => k.direccion && mismaDireccion(f.wallet, k.direccion)),
+  );
+  if (coincidencias > 0 && sinConfirmar.length > 0) {
+    c.info(
+      "claves",
+      "claves.faltantes",
+      "Firmantes sin clave aportada",
+      `${sinConfirmar.map((f) => f.email).join(", ")} — su firma está verificada igual; lo que no se confirmó es quién controla esa wallet hoy.`,
+    );
+  }
+}
+
 // ── 4. La cadena ─────────────────────────────────────────────────────────────
 async function chequearCadena(c, m, opts) {
   const chainId = Number(m?.cadena?.chainId);
@@ -839,6 +928,7 @@ export async function verificarEvidencia(bytes, opts) {
   // sí solo que esas wallets firmaron: recuperar la dirección no necesita la
   // cadena, solo la firma y el mensaje.
   chequearFirmasCrudas(c, m, opts);
+  chequearClaves(c, m);
 
   // Lo simulado se detecta SIN red, y antes de tocarla: si el paquete salió de
   // un entorno sin cadena, consultar la cadena solo va a confirmar que no hay

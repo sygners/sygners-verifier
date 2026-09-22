@@ -94,6 +94,41 @@ que puede haber campos que este verificador no mira.
 > firma, aparece en los dos lugares con direcciones distintas — el informe lo
 > aclara cuando pasa.
 
+## Confirmar quién controla las wallets (opcional)
+
+El paquete prueba que *cierta wallet* firmó el documento. Lo que no puede decir
+por sí solo es quién controla esa wallet hoy. Si alguien te entrega la clave
+privada de un firmante, ponela en el entorno y el verificador cierra ese
+extremo:
+
+```bash
+PK_SIGNER1=0x…        # el sufijo es libre: PK_SIGNER1, PK_SIGNER_ANA, …
+PK_SIGNER2=
+```
+
+De cada una se deriva la dirección y se busca entre las wallets del paquete:
+
+| resultado | qué significa |
+|---|---|
+| coincide con un firmante | quien aportó la clave controla la wallet que produjo esa firma |
+| coincide con `emisor.wallet` | controla la wallet del **registro**, que no firma nada |
+| no coincide con ninguna | aviso: es de otra operación, o esa wallet no es la que creías |
+| ninguna de las aportadas coincide | falla |
+
+Tres cosas que conviene tener claras:
+
+- **La clave nunca firma nada.** Solo se deriva su dirección pública, que es una
+  cuenta y no produce ninguna firma. Un verificador que firmara con una clave
+  ajena podría fabricar evidencia.
+- **Nunca sale en la salida.** Ni en el informe, ni en el JSON, ni en un mensaje
+  de error: lo único que se propaga es la dirección derivada y el nombre de la
+  variable.
+- **Esto acredita control, no identidad.** Una clave se copia, se presta y se
+  roba. Y pedirla es pedir el control entero de esa wallet, para siempre: si lo
+  único que querés es confirmar que alguien la controla, pedile que **firme** un
+  texto que elijas vos y verificá esa firma — prueba lo mismo sin que nadie te
+  entregue nada.
+
 ## Veredictos y códigos de salida
 
 | veredicto | salida | significa |
@@ -149,6 +184,7 @@ archivo, así que `RPC_URL_11155111=... node src/cli.js …` también funciona.
 | `TOLERANCIA_FECHA_SEGUNDOS` | fecha declarada vs. fecha del bloque | `3600` |
 | `RPC_TIMEOUT_MS` | timeout de cada pedido al RPC | `20000` |
 | `ESTRICTO` | los avisos también hacen fallar | `false` |
+| `PK_SIGNER*` | claves privadas de firmantes, para confirmar quién controla cada wallet | sin aportar |
 
 Cadenas con tabla propia: Ethereum (1), Ethereum Sepolia (11155111, el default
 del código de sygners), Base (8453), Base Sepolia (84532), **OP Mainnet (10,
