@@ -10,8 +10,10 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { zipSync, strToU8 } from "fflate";
+import { Wallet, keccak256 } from "ethers";
 import { sha256Hex } from "../src/hash.js";
 import { uidSimuladoDeRegistro, txSimuladoDeRegistro, uidSimuladoDeFirma } from "../src/simulado.js";
+import { DECLARACION, TIPOS_FIRMA, dominioCanonico } from "../src/firma.js";
 
 const DIR = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -155,4 +157,44 @@ const hash = sha256Hex(DOC);
   writeFileSync(join(DIR, "inventada.zip"), empaquetar({ documento: DOC, nombreDocumento: NOMBRE, m, pdf: PDF }));
 }
 
-console.log(`fixtures en ${DIR}: simulada.zip, manipulada.zip, inventada.zip`);
+// 4. Formato 2: con la firma cruda adentro. Los UIDs on-chain son inventados
+//    (no hay nada anclado), pero la FIRMA es real: con `--sin-cadena` se ve
+//    que la dirección se recupera sola.
+{
+  const id = "doc-formato2-1";
+  const w = Wallet.createRandom();
+  const firmadoEl = new Date("2026-09-01T12:30:00.000Z");
+  const mensaje = {
+    documentId: id,
+    documentHash: hash,
+    signerEmail: "firmante@example.com",
+    statement: DECLARACION,
+    timestamp: Math.floor(firmadoEl.getTime() / 1000),
+  };
+  const firma = await w.signTypedData(dominioCanonico(10), TIPOS_FIRMA, mensaje);
+  const m = manifiesto({
+    id,
+    hash,
+    chainId: 10,
+    registroUid: `0x${"1a".repeat(32)}`,
+    registroTxHash: `0x${"2b".repeat(32)}`,
+    nombreArchivo: NOMBRE,
+    tamano: DOC.length,
+    firmantes: [
+      {
+        email: "firmante@example.com",
+        wallet: w.address,
+        attestationUid: `0x${"3c".repeat(32)}`,
+        txHash: `0x${"4d".repeat(32)}`,
+      },
+    ],
+  });
+  m.formato = 2;
+  m.eip712 = { dominio: dominioCanonico(10), tipos: TIPOS_FIRMA };
+  m.firmantes[0].mensaje = mensaje;
+  m.firmantes[0].firma = firma;
+  m.firmantes[0].sigHash = keccak256(firma);
+  writeFileSync(join(DIR, "formato2.zip"), empaquetar({ documento: DOC, nombreDocumento: NOMBRE, m, pdf: PDF }));
+}
+
+console.log(`fixtures en ${DIR}: simulada.zip, manipulada.zip, inventada.zip, formato2.zip`);

@@ -9,9 +9,11 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { zipSync, strToU8 } from "fflate";
+import { Wallet, keccak256 } from "ethers";
 import { sha256Hex } from "../src/hash.js";
 import { verificarEvidencia } from "../src/verificar.js";
 import { opciones, SCHEMA_DEFINICION } from "../src/config.js";
+import { DECLARACION, TIPOS_FIRMA, dominioCanonico } from "../src/firma.js";
 import { CERO32, atestacion, datosSygners, levantarNodo } from "./nodo-falso.js";
 
 const DIR = dirname(fileURLToPath(import.meta.url));
@@ -203,6 +205,101 @@ console.log("\n--- red equivocada ---");
 {
   const r = await contra({ ...estadoCadena(), chainId: 1 }, armar(manifiesto()));
   check("un nodo de otra cadena aborta el cotejo", tiene(r, "cadena.id", "falla") && r.veredicto === "NO_VERIFICA");
+}
+
+
+// ── 5. Formato 2: la firma cruda ─────────────────────────────────────────────
+//
+// Lo que cambia: el paquete deja de pedir que se le crea a la cadena sobre
+// quién firmó. La dirección se recupera de la firma, acá, sin red.
+console.log("\n--- formato 2 (firma cruda) ---");
+{
+  const w = Wallet.createRandom();
+  const mensaje = {
+    documentId: "doc-1",
+    documentHash: HASH,
+    signerEmail: "firmante@example.com",
+    statement: DECLARACION,
+    timestamp: Math.floor(FIRMADO.getTime() / 1000),
+  };
+  const firma = await w.signTypedData(dominioCanonico(CHAIN_ID), TIPOS_FIRMA, mensaje);
+  const sigHash = keccak256(firma);
+
+  const m2 = (patch = {}, parcheFirmante = {}) => ({
+    ...manifiesto(),
+    formato: 2,
+    eip712: { dominio: dominioCanonico(CHAIN_ID), tipos: TIPOS_FIRMA },
+    firmantes: [
+      {
+        email: "firmante@example.com", wallet: w.address, firmadoEl: FIRMADO.toISOString(),
+        attestationUid: FIRMA_UID, txHash: FIRMA_TX, estado: "SIGNED",
+        mensaje, firma, sigHash, ...parcheFirmante,
+      },
+    ],
+    ...patch,
+  });
+
+  const cadena2 = (sh = sigHash, subject = w.address) => estadoCadena({
+    atestaciones: {
+      [FIRMA_UID]: atestacion({
+        uid: FIRMA_UID, schema: SCHEMA_UID, time: Math.floor(FIRMADO.getTime() / 1000) + 12,
+        recipient: subject, attester: ATTESTER, refUID: REG_UID,
+        data: datosSygners({ documentHash: HASH, action: "SIGN", email: "firmante@example.com", subject, sigHash: sh }),
+      }),
+    },
+  });
+
+  // Positivo, con red.
+  const r = await contra(cadena2(), armar(m2()));
+  check("un paquete de formato 2 coherente VERIFICA", r.veredicto === "VERIFICADO",
+        `${r.veredicto}: ${r.chequeos.filter((x) => x.estado === "falla").map((x) => x.id).join(", ")}`);
+  check("se recuperó la dirección desde la firma", tiene(r, "firma.0.recuperada", "ok"));
+  check("el dominio EIP-712 del paquete es el de sygners", tiene(r, "firma.eip712", "ok"));
+  check("la firma del paquete es la anclada on-chain", tiene(r, "firma.0.sighash", "ok"));
+
+  // Positivo, SIN red: es lo nuevo — la firma se prueba igual.
+  const off = await verificarEvidencia(armar(m2()), opciones({ sinCadena: true }));
+  check("sin cadena, la firma se verifica igual", tiene(off, "firma.0.recuperada", "ok") && off.veredicto === "PARCIAL", off.veredicto);
+
+  // La firma es de otra wallet.
+  const otra = Wallet.createRandom();
+  const firmaAjena = await otra.signTypedData(dominioCanonico(CHAIN_ID), TIPOS_FIRMA, mensaje);
+  const rAjena = await contra(cadena2(keccak256(firmaAjena), w.address), armar(m2({}, { firma: firmaAjena, sigHash: keccak256(firmaAjena) })));
+  check("una firma de otra wallet no verifica", rAjena.veredicto === "NO_VERIFICA" && tiene(rAjena, "firma.0.recuperada", "falla"));
+
+  // El mensaje dice otro documento (firma válida, documento ajeno).
+  const msjAjeno = { ...mensaje, documentHash: `0x${"77".repeat(32)}` };
+  const firmaOtroDoc = await w.signTypedData(dominioCanonico(CHAIN_ID), TIPOS_FIRMA, msjAjeno);
+  const rOtro = await contra(cadena2(keccak256(firmaOtroDoc)), armar(m2({}, { mensaje: msjAjeno, firma: firmaOtroDoc, sigHash: keccak256(firmaOtroDoc) })));
+  check("una firma válida sobre OTRO documento no verifica", rOtro.veredicto === "NO_VERIFICA" && tiene(rOtro, "firma.0.mensaje.hash", "falla"));
+
+  // Dominio a medida: una firma hecha en otra cadena, con el eip712 del paquete
+  // retocado para que recupere limpia.
+  const firmaOtraRed = await w.signTypedData(dominioCanonico(1), TIPOS_FIRMA, mensaje);
+  const rDom = await contra(
+    cadena2(keccak256(firmaOtraRed)),
+    armar(m2({ eip712: { dominio: dominioCanonico(1), tipos: TIPOS_FIRMA } }, { firma: firmaOtraRed, sigHash: keccak256(firmaOtraRed) })),
+  );
+  check("un dominio EIP-712 a medida no cuela", rDom.veredicto === "NO_VERIFICA" && tiene(rDom, "firma.eip712", "falla"));
+  check("   y la recuperación corre igual con el dominio canónico", tiene(rDom, "firma.0.recuperada", "falla"));
+
+  // La firma del paquete no es la que se ancló.
+  const rSig = await contra(cadena2(`0x${"aa".repeat(32)}`), armar(m2()));
+  check("si la huella anclada es otra, no verifica", rSig.veredicto === "NO_VERIFICA" && tiene(rSig, "firma.0.sighash", "falla"));
+
+  // La declaración firmada es otra.
+  const msjOtroTexto = { ...mensaje, statement: "Acepto cualquier cosa." };
+  const firmaOtroTexto = await w.signTypedData(dominioCanonico(CHAIN_ID), TIPOS_FIRMA, msjOtroTexto);
+  const rTexto = await contra(cadena2(keccak256(firmaOtroTexto)), armar(m2({}, { mensaje: msjOtroTexto, firma: firmaOtroTexto, sigHash: keccak256(firmaOtroTexto) })));
+  check("una declaración distinta no verifica", rTexto.veredicto === "NO_VERIFICA" && tiene(rTexto, "firma.0.mensaje.declaracion", "falla"));
+
+  // Sin firma cruda: aviso, no falla. Es una operación vieja, no un paquete roto.
+  const rVieja = await contra(cadena2(`0x${"ee".repeat(32)}`), armar(m2({}, { mensaje: null, firma: null, sigHash: null })));
+  check("un firmante sin firma cruda avisa pero no invalida", tiene(rVieja, "firma.0.cruda", "aviso") && rVieja.veredicto === "VERIFICADO", rVieja.veredicto);
+
+  // Formato 1: el bloque entero se omite, sin ensuciar el veredicto.
+  const r1 = await contra(estadoCadena(), armar(manifiesto()));
+  check("un manifiesto de formato 1 omite el bloque de firma cruda", tiene(r1, "firma.crudas", "omitido") && r1.veredicto === "VERIFICADO");
 }
 
 console.log(`\n${fallas === 0 ? "todo en verde" : `${fallas} FALLAS`}\n`);

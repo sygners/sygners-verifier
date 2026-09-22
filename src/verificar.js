@@ -13,6 +13,14 @@
 //     RPC de la cadena que el propio manifiesto declara.
 
 import { sha256Hex, hashesIguales } from "./hash.js";
+import {
+  DECLARACION,
+  compararEip712,
+  esFirmaBienFormada,
+  huella,
+  mismaDireccion,
+  recuperarFirmante,
+} from "./firma.js";
 import { abrirEvidencia, NOMBRE_CONSTANCIA, NOMBRE_LEEME, NOMBRE_MANIFIESTO } from "./zip.js";
 import { detectarSimulado } from "./simulado.js";
 import {
@@ -32,7 +40,11 @@ import {
   proveedor,
 } from "./eas.js";
 
-const FORMATO_SOPORTADO = 1;
+// Formato 1: el original. Formato 2 (22/09/2026): agrega `eip712` y, por
+// firmante, `mensaje` + `firma` + `sigHash` — la firma cruda, que es lo que
+// permite recuperar la dirección sin creerle a nadie.
+const FORMATO_MAXIMO = 2;
+const FORMATO_CON_FIRMA_CRUDA = 2;
 
 class Chequeos {
   constructor() {
@@ -149,14 +161,21 @@ function chequearManifiesto(c, m) {
     `Faltan: ${faltantes.join(", ")}`,
   );
 
-  if (m.formato === FORMATO_SOPORTADO) {
-    c.ok("manifiesto", "manifiesto.formato", "Formato de manifiesto conocido", `formato ${m.formato}`);
-  } else if (typeof m.formato === "number" && m.formato > FORMATO_SOPORTADO) {
+  if (m.formato >= 1 && m.formato <= FORMATO_MAXIMO) {
+    c.ok(
+      "manifiesto",
+      "manifiesto.formato",
+      "Formato de manifiesto conocido",
+      m.formato >= FORMATO_CON_FIRMA_CRUDA
+        ? `formato ${m.formato} — trae la firma cruda de cada firmante`
+        : `formato ${m.formato} — sin firma cruda (anterior al 22/09/2026)`,
+    );
+  } else if (typeof m.formato === "number" && m.formato > FORMATO_MAXIMO) {
     c.aviso(
       "manifiesto",
       "manifiesto.formato",
       "Formato de manifiesto conocido",
-      `El manifiesto declara formato ${m.formato} y este verificador entiende hasta el ${FORMATO_SOPORTADO}. Los chequeos corren igual, pero puede haber campos nuevos que no se miran.`,
+      `El manifiesto declara formato ${m.formato} y este verificador entiende hasta el ${FORMATO_MAXIMO}. Los chequeos corren igual, pero puede haber campos nuevos que no se miran.`,
     );
   } else {
     c.falla(
@@ -288,6 +307,163 @@ function chequearDocumento(c, zip, m) {
   }
 
   return calculado;
+}
+
+// ── 3.5 Las firmas EIP-712, sin red ──────────────────────────────────────────
+//
+// Este bloque es el que cambió lo que un paquete prueba por sí solo. No consulta
+// nada: recupera la dirección desde la firma cruda y la compara con la
+// declarada. Si da, esa wallet firmó ese mensaje, y no hay que creerle a la
+// cadena ni a sygners para saberlo.
+function chequearFirmasCrudas(c, m, opts) {
+  const firmantes = Array.isArray(m.firmantes) ? m.firmantes : [];
+  const chainId = Number(m?.cadena?.chainId);
+
+  if (!(m.formato >= FORMATO_CON_FIRMA_CRUDA)) {
+    c.omitido(
+      "firmas",
+      "firma.crudas",
+      "Recuperar la dirección desde la firma",
+      `El manifiesto es de formato ${m.formato}, anterior a que el paquete llevara la firma cruda. Lo que quedó anclado on-chain es la huella (keccak256 de la firma), no la firma, así que desde este paquete no hay nada que recuperar.`,
+    );
+    return;
+  }
+
+  // El dominio del paquete se verifica, no se usa a ciegas: uno elegido a
+  // medida haría que una firma hecha en otro lado recupere limpia acá.
+  const cmp = compararEip712(m.eip712, chainId);
+  c.segun(
+    cmp.ok,
+    "firmas",
+    "firma.eip712",
+    "El dominio y los tipos EIP-712 del paquete son los de sygners",
+    `sygners · v1 · chainId ${chainId}`,
+    `El paquete declara otro esquema de firma: ${cmp.problemas.join("; ")}. La recuperación corre igual con el dominio canónico.`,
+  );
+
+  // La wallet del emisor no firma: identifica al registro on-chain. Cuando
+  // quien emite además firma, aparece dos veces con direcciones distintas, y
+  // eso confunde lo suficiente como para escribirlo.
+  const emisorTambienFirma = firmantes.some(
+    (f) => String(f.email).toLowerCase() === String(m?.emisor?.email ?? "").toLowerCase(),
+  );
+  if (emisorTambienFirma) {
+    c.info(
+      "firmas",
+      "firma.emisor",
+      "El emisor también firma",
+      `La wallet del emisor (${m?.emisor?.wallet}) es la del REGISTRO y no firma nada, así que no se recupera de ninguna firma. Las que se verifican son las de firmantes[].wallet: que sean distintas es lo esperado.`,
+    );
+  }
+
+  for (const [i, f] of firmantes.entries()) {
+    const etiqueta = f.email ?? `firmante ${i + 1}`;
+
+    if (f.firma === null || f.firma === undefined) {
+      c.aviso(
+        "firmas",
+        `firma.${i}.cruda`,
+        `${etiqueta}: el paquete trae su firma cruda`,
+        "No la trae. Es una firma anterior al formato 2 (o un firmante que nunca firmó): su evidencia sigue siendo la attestation on-chain, pero no se puede recuperar la dirección acá.",
+      );
+      continue;
+    }
+    if (!esFirmaBienFormada(f.firma)) {
+      c.falla("firmas", `firma.${i}.cruda`, `${etiqueta}: su firma tiene forma de firma`, `${JSON.stringify(f.firma)} no son 65 bytes en hex.`);
+      continue;
+    }
+    if (!f.mensaje || typeof f.mensaje !== "object") {
+      c.falla(
+        "firmas",
+        `firma.${i}.mensaje`,
+        `${etiqueta}: el paquete trae el mensaje que firmó`,
+        "Viene la firma pero no el mensaje: no hay nada contra qué verificarla.",
+      );
+      continue;
+    }
+
+    // Qué dice el mensaje que se firmó. Una firma válida sobre otro documento,
+    // otra persona o otra declaración no dice nada de esta operación.
+    const msj = f.mensaje;
+    c.segun(
+      hashesIguales(msj.documentHash, m?.documento?.hash),
+      "firmas",
+      `firma.${i}.mensaje.hash`,
+      `${etiqueta}: firmó el hash de ESTE documento`,
+      msj.documentHash,
+      `Firmó ${msj.documentHash}, y el documento del paquete es ${m?.documento?.hash}.`,
+    );
+    c.segun(
+      msj.documentId === m?.documento?.id,
+      "firmas",
+      `firma.${i}.mensaje.id`,
+      `${etiqueta}: firmó esta operación`,
+      msj.documentId,
+      `El mensaje dice ${JSON.stringify(msj.documentId)} y la operación es ${JSON.stringify(m?.documento?.id)}.`,
+    );
+    c.segun(
+      String(msj.signerEmail).toLowerCase() === String(f.email ?? "").toLowerCase(),
+      "firmas",
+      `firma.${i}.mensaje.email`,
+      `${etiqueta}: firmó con su propio correo`,
+      msj.signerEmail,
+      `El mensaje dice ${msj.signerEmail} y el firmante es ${f.email}.`,
+    );
+    c.segun(
+      msj.statement === DECLARACION,
+      "firmas",
+      `firma.${i}.mensaje.declaracion`,
+      `${etiqueta}: aceptó la declaración de sygners`,
+      msj.statement,
+      `Aceptó otro texto: ${JSON.stringify(msj.statement)}.`,
+    );
+
+    // LA comprobación: la dirección sale de la firma.
+    const r = recuperarFirmante(msj, f.firma, chainId);
+    if (!r.ok) {
+      c.falla("firmas", `firma.${i}.recuperada`, `${etiqueta}: su firma se puede verificar`, r.error);
+    } else {
+      c.segun(
+        mismaDireccion(r.direccion, f.wallet),
+        "firmas",
+        `firma.${i}.recuperada`,
+        `${etiqueta}: la dirección recuperada de su firma es la declarada`,
+        r.direccion,
+        `La firma la produjo ${r.direccion}, y el manifiesto declara ${f.wallet}.`,
+        { esperado: f.wallet ?? null, obtenido: r.direccion },
+      );
+    }
+
+    // Y la huella, que es la mitad que quedó escrita en la cadena.
+    const h = huella(f.firma);
+    if (f.sigHash) {
+      c.segun(
+        hashesIguales(h, f.sigHash),
+        "firmas",
+        `firma.${i}.huella`,
+        `${etiqueta}: la huella declarada es la de su firma`,
+        h,
+        `keccak256 de la firma da ${h} y el manifiesto declara ${f.sigHash}.`,
+      );
+    } else {
+      c.aviso("firmas", `firma.${i}.huella`, `${etiqueta}: el manifiesto declara la huella de su firma`, "No la declara; se recalcula desde la firma para cotejarla con la cadena.");
+    }
+
+    // El timestamp lo asevera quien firma; `firmadoEl` es el reloj del
+    // servidor. Que estén lejos no invalida la firma, pero se dice.
+    const declarada = fecha(f.firmadoEl);
+    if (declarada && Number.isFinite(Number(msj.timestamp))) {
+      const delta = Math.abs(seg(declarada) - Number(msj.timestamp));
+      c[delta <= opts.toleranciaSegundos ? "ok" : "aviso"](
+        "firmas",
+        `firma.${i}.mensaje.fecha`,
+        `${etiqueta}: la fecha que firmó y la registrada están cerca`,
+        delta <= opts.toleranciaSegundos
+          ? `${new Date(Number(msj.timestamp) * 1000).toISOString()} (${delta}s)`
+          : `El mensaje dice ${new Date(Number(msj.timestamp) * 1000).toISOString()} y el manifiesto registró ${f.firmadoEl}: ${delta}s de diferencia.`,
+      );
+    }
+  }
 }
 
 // ── 4. La cadena ─────────────────────────────────────────────────────────────
@@ -445,14 +621,29 @@ async function chequearCadena(c, m, opts) {
       d.subject,
       `En la cadena: ${d.subject}. En el manifiesto: ${f.wallet}.`,
     );
-    c.segun(
-      d.sigHash && d.sigHash !== BYTES32_CERO,
-      "firmas",
-      `firma.${i}.sighash`,
-      `${etiqueta}: la atestación lleva la huella de su firma EIP-712`,
-      d.sigHash,
-      "El campo sigHash viene en cero: la atestación no ata ninguna firma.",
-    );
+    // La huella anclada. Con el formato 2 esto deja de ser "hay algo escrito" y
+    // pasa a ser el nudo de toda la evidencia: la firma que trae el paquete es,
+    // byte a byte, la que se ancló en la cadena.
+    const huellaDelPaquete = esFirmaBienFormada(f.firma) ? huella(f.firma) : null;
+    if (huellaDelPaquete) {
+      c.segun(
+        hashesIguales(d.sigHash, huellaDelPaquete),
+        "firmas",
+        `firma.${i}.sighash`,
+        `${etiqueta}: la firma del paquete es la que quedó anclada`,
+        d.sigHash,
+        `En la cadena quedó la huella ${d.sigHash} y la firma que trae el paquete da ${huellaDelPaquete}: no es la misma firma.`,
+      );
+    } else {
+      c.segun(
+        d.sigHash && d.sigHash !== BYTES32_CERO,
+        "firmas",
+        `firma.${i}.sighash`,
+        `${etiqueta}: la atestación lleva la huella de su firma EIP-712`,
+        d.sigHash,
+        "El campo sigHash viene en cero: la atestación no ata ninguna firma.",
+      );
+    }
     // La firma referencia al registro: es lo que las une en un solo expediente.
     if (registro) {
       c.segun(
@@ -633,6 +824,11 @@ export async function verificarEvidencia(bytes, opts) {
 
   chequearManifiesto(c, m);
   const hashCalculado = chequearDocumento(c, zip, m);
+
+  // Las firmas se verifican SIN red: desde el formato 2, un paquete prueba por
+  // sí solo que esas wallets firmaron: recuperar la dirección no necesita la
+  // cadena, solo la firma y el mensaje.
+  chequearFirmasCrudas(c, m, opts);
 
   // Lo simulado se detecta SIN red, y antes de tocarla: si el paquete salió de
   // un entorno sin cadena, consultar la cadena solo va a confirmar que no hay

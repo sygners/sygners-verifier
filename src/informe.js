@@ -33,6 +33,11 @@ const VEREDICTO = {
     texto: "VERIFICA PARCIALMENTE (sin cadena)",
     pinta: amarillo,
     glosa: "El paquete es internamente consistente: el documento coincide con el hash del manifiesto. NO se coteja contra la cadena, así que esto todavía no prueba cuándo existió ni quién lo ancló.",
+    // Con el formato 2 el modo sin red deja de ser solo "consistente consigo
+    // mismo": la firma se verifica de verdad, y el informe tiene que decirlo o
+    // se lee como si hubiera probado menos de lo que probó.
+    glosaConFirmas:
+      "Las firmas se verificaron: la dirección recuperada de cada una es la que el manifiesto declara, y el documento coincide con el hash firmado. Lo único que falta es la cadena, que es la que fecha el anclaje y dice quién lo hizo.",
   },
   SIMULADO: {
     texto: "EVIDENCIA SIMULADA",
@@ -48,13 +53,17 @@ const VEREDICTO = {
 
 export function imprimirInforme(r, { archivo }) {
   const v = VEREDICTO[r.veredicto];
+  const firmasProbadas = r.chequeos.some(
+    (c) => /^firma\.\d+\.recuperada$/.test(c.id) && c.estado === "ok",
+  );
+  const glosa = (firmasProbadas && v.glosaConFirmas) || v.glosa;
   const L = [];
   L.push("");
   L.push(negrita("ARCHIVO DE EVIDENCIA — verificación independiente"));
   L.push(gris(archivo));
   L.push("");
   L.push(`  ${v.pinta(negrita(v.texto))}`);
-  L.push(`  ${gris(v.glosa)}`);
+  L.push(`  ${gris(glosa)}`);
   L.push("");
 
   const op = r.operacion;

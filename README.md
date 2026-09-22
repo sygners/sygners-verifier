@@ -24,7 +24,7 @@ Cuatro archivos, tal como los arma `src/lib/archivo-evidencia.ts` de sygners:
 |---|---|
 | `<documento>` | el documento original, tal como se firmó (el nombre es el suyo) |
 | `constancia.pdf` | la constancia de firma: hashes, wallets, fechas |
-| `manifiesto.json` | los mismos hechos en JSON, armados por el servidor |
+| `manifiesto.json` | los mismos hechos en JSON, armados por el servidor; desde el formato 2, también la firma cruda de cada firmante |
 | `LEEME.txt` | las instrucciones en prosa, con el hash escrito adentro |
 
 ## Qué comprueba este verificador
@@ -32,8 +32,8 @@ Cuatro archivos, tal como los arma `src/lib/archivo-evidencia.ts` de sygners:
 **Sin red (siempre):**
 
 1. El `.zip` abre y trae las cuatro piezas, con un solo documento adentro.
-2. El manifiesto es JSON válido, de formato conocido (`formato: 1`), con todos
-   sus campos, fechas coherentes y todos los firmantes en `SIGNED`.
+2. El manifiesto es JSON válido, de formato conocido (`formato: 1` o `2`), con
+   todos sus campos, fechas coherentes y todos los firmantes en `SIGNED`.
 3. **El SHA-256 del documento es el que declara el manifiesto.** Es *el*
    chequeo: si falla, el archivo que viene adentro no es el que se firmó.
 4. El tamaño, el nombre y el hash repetido en `LEEME.txt` concuerdan.
@@ -42,45 +42,79 @@ Cuatro archivos, tal como los arma `src/lib/archivo-evidencia.ts` de sygners:
    (`keccak256("uid:register:<id>")`) para que el flujo local siga siendo
    trazable. Un paquete así se ve idéntico a uno real — salvo que sus UIDs se
    pueden **recalcular**, y eso es lo que se hace acá, sin tocar la red.
+6. **Las firmas EIP-712, recuperando la dirección** (manifiesto `formato: 2` en
+   adelante): de cada firma cruda se recupera quién la produjo y tiene que dar
+   la wallet declarada. Además, el mensaje firmado tiene que decir el hash de
+   *este* documento, *esta* operación, el correo de *ese* firmante y la
+   declaración de sygners, y `keccak256(firma)` tiene que dar la huella
+   declarada. **Esto no necesita la cadena**: es la única parte de la evidencia
+   que se sostiene sola, sin creerle a nadie.
+7. El dominio y los tipos EIP-712 que trae el paquete son los de sygners para la
+   cadena del documento. Se verifican, no se usan a ciegas: un dominio elegido a
+   medida haría que una firma que esa wallet hizo en otra app recupere limpia y
+   parezca una firma de este documento. La recuperación corre siempre con el
+   dominio canónico.
 
 **Contra la cadena (por RPC, salvo `--sin-cadena`):**
 
-6. El nodo declara el mismo `chainId` que el manifiesto, o no se coteja nada.
-7. La atestación del **registro** existe, no está revocada ni vencida, y sus
+8. El nodo declara el mismo `chainId` que el manifiesto, o no se coteja nada.
+9. La atestación del **registro** existe, no está revocada ni vencida, y sus
    datos decodificados con el schema de sygners dicen: el mismo hash de
    documento, `action = REGISTER`, el correo y la wallet del emisor.
-8. La atestación de **cada firma** existe, dice `action = SIGN`, sobre el mismo
-   hash de documento, con el correo y la wallet de ese firmante, con `sigHash`
-   distinto de cero, **referenciando (`refUID`) al registro** y bajo el mismo
-   schema.
-9. El schema on-chain es, textualmente,
-   `bytes32 documentHash,string action,string email,address subject,bytes32 sigHash`
-   — leído del SchemaRegistry de esa cadena, no asumido.
-10. Las transacciones existen, salieron bien (`status = 1`) y fueron al
+10. La atestación de **cada firma** existe, dice `action = SIGN`, sobre el mismo
+    hash de documento, con el correo y la wallet de ese firmante,
+    **referenciando (`refUID`) al registro** y bajo el mismo schema.
+11. **La huella anclada es la de la firma que trae el paquete**
+    (`keccak256(firma) == sigHash` on-chain). Es el nudo entre las dos mitades:
+    ata la firma que se puede verificar sola a lo que quedó escrito en la
+    cadena. Sin firma cruda, solo se comprueba que el `sigHash` no venga en cero.
+12. El schema on-chain es, textualmente,
+    `bytes32 documentHash,string action,string email,address subject,bytes32 sigHash`
+    — leído del SchemaRegistry de esa cadena, no asumido.
+13. Las transacciones existen, salieron bien (`status = 1`) y fueron al
     contrato de EAS.
-11. La fecha que declara el manifiesto y la del bloque están cerca (aviso).
-12. Opcional y lo más fuerte que podés exigir: que el **atestador** y el **UID
+14. La fecha que declara el manifiesto y la del bloque están cerca (aviso).
+15. Opcional y lo más fuerte que podés exigir: que el **atestador** y el **UID
     del schema** sean los que vos esperás (`SYGNERS_ATTESTER`, `EAS_SCHEMA_UID`).
 
 ## Qué NO comprueba, y por qué
 
-- **Las firmas EIP-712 en sí.** On-chain queda la *huella* de cada firma
-  (`sigHash = keccak256(firma)`), no la firma. El manifiesto tampoco la lleva.
-  Con el paquete en la mano se puede probar que esa wallet quedó anclada
-  firmando ese documento en esa fecha; recuperar la dirección desde la firma
-  cruda requiere un dato que el zip no contiene.
+- **Las firmas de los paquetes viejos (`formato: 1`).** Ahí on-chain queda solo
+  la *huella* (`sigHash = keccak256(firma)`) y el manifiesto no lleva la firma,
+  así que no hay nada que recuperar: de esos paquetes se prueba que la wallet
+  quedó *anclada* firmando el documento, no que produjo la firma. Desde el
+  `formato: 2` esto sí se comprueba, y el informe lo dice en cada caso. Un
+  firmante suelto sin firma cruda dentro de un paquete de formato 2 sale como
+  aviso, no como falla: es una fila anterior al cambio, no un paquete roto.
 - **Quién es la persona detrás de la wallet.** Eso lo cubre el informe de
   verificación de identidad de sygners, que es otro papel y otro flujo.
 - **Que el atestador sea sygners**, salvo que vos se lo digas con
   `SYGNERS_ATTESTER`. Sin esa variable, el verificador informa quién ancló y no
   opina: cualquiera puede escribir una atestación con cualquier contenido.
 
+## Formatos de manifiesto
+
+| formato | desde | qué trae de más |
+|---|---|---|
+| `1` | el día uno | los hechos de la operación y los identificadores on-chain |
+| `2` | 22/09/2026 | `eip712` (dominio y tipos) y, por firmante, `mensaje` + `firma` + `sigHash` |
+
+Los dos se verifican. Un formato más nuevo que `2` corre igual, con un aviso de
+que puede haber campos que este verificador no mira.
+
+> **Las dos wallets del manifiesto son distintas a propósito.** `emisor.wallet`
+> es la del **registro** on-chain: identifica a quien creó la operación y no
+> firma nada, así que no se recupera de ninguna firma. Las que se verifican
+> contra las firmas son las de `firmantes[].wallet`. Cuando quien emite además
+> firma, aparece en los dos lugares con direcciones distintas — el informe lo
+> aclara cuando pasa.
+
 ## Veredictos y códigos de salida
 
 | veredicto | salida | significa |
 |---|---|---|
 | `VERIFICA` | 0 | el documento es el anclado y la cadena dice lo que el manifiesto dice |
-| `VERIFICA PARCIALMENTE (sin cadena)` | 0 | consistente consigo mismo; no se cotejó contra la red |
+| `VERIFICA PARCIALMENTE (sin cadena)` | 0 | el documento es el del manifiesto y, en formato 2, las firmas se verificaron; no se cotejó contra la red |
 | `EVIDENCIA SIMULADA` | 1 | salió de una instancia sin cadena: no prueba nada frente a un tercero |
 | `NO VERIFICA` | 1 | falló al menos un chequeo bloqueante |
 
