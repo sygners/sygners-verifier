@@ -127,7 +127,3 @@ export function imprimirInforme(r, { archivo }) {
   L.push("");
   process.stdout.write(L.join("\n"));
 }
-
-export function imprimirJson(r) {
-  process.stdout.write(JSON.stringify(r, null, 2) + "\n");
-}

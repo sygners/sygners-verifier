@@ -87,10 +87,33 @@ function estadoCadena(patch = {}) {
   };
 }
 
-async function contra(estado, zip, flags = {}) {
+// La configuración sale del entorno, igual que en la vida real: el verificador
+// ya no toma opciones por parámetro.
+function conEnv(vars, fn) {
+  const previas = { ...process.env };
+  for (const k of Object.keys(process.env)) {
+    if (/^(RPC_URL|EAS_SCHEMA_UID|SYGNERS_ATTESTER|PK_SIGNER|SIN_CADENA)/.test(k)) delete process.env[k];
+  }
+  Object.assign(process.env, vars);
+  return Promise.resolve(fn()).finally(() => {
+    for (const k of Object.keys(process.env)) {
+      if (/^(RPC_URL|EAS_SCHEMA_UID|SYGNERS_ATTESTER|PK_SIGNER|SIN_CADENA)/.test(k)) delete process.env[k];
+    }
+    Object.assign(process.env, previas);
+  });
+}
+
+const sinCadena = (zip) => conEnv({ SIN_CADENA: "true" }, () => verificarEvidencia(zip, opciones()));
+
+async function contra(estado, zip, extra = {}) {
   const nodo = await levantarNodo(estado);
   try {
-    return await verificarEvidencia(zip, opciones({ rpc: nodo.url, schemaUid: SCHEMA_UID, attester: ATTESTER, ...flags }));
+    return await conEnv(
+      // El comodín además del específico: así el caso "el nodo es de otra
+      // cadena" también cae en el nodo falso y se puede probar.
+      { RPC_URL: nodo.url, [`RPC_URL_${estado.chainId}`]: nodo.url, EAS_SCHEMA_UID: SCHEMA_UID, SYGNERS_ATTESTER: ATTESTER, ...extra },
+      () => verificarEvidencia(zip, opciones()),
+    );
   } finally {
     await nodo.cerrar();
   }
@@ -100,19 +123,19 @@ async function contra(estado, zip, flags = {}) {
 console.log("\n--- offline ---");
 {
   const leer = (n) => readFileSync(join(DIR, "fixtures", n));
-  const sim = await verificarEvidencia(leer("simulada.zip"), opciones({}));
+  const sim = await conEnv({}, () => verificarEvidencia(leer("simulada.zip"), opciones()));
   check("un paquete del modo simulado se marca como SIMULADO", sim.veredicto === "SIMULADO", sim.veredicto);
   check("y el motivo es el UID determinista", tiene(sim, "cadena.simulado", "falla"));
   check("pero el documento sí coincide con su manifiesto", tiene(sim, "documento.hash", "ok"));
 
-  const man = await verificarEvidencia(leer("manipulada.zip"), opciones({ sinCadena: true }));
+  const man = await sinCadena(leer("manipulada.zip"));
   check("un documento cambiado no verifica", man.veredicto === "NO_VERIFICA", man.veredicto);
   check("y la falla es la del hash", tiene(man, "documento.hash", "falla"));
 
-  const parcial = await verificarEvidencia(leer("inventada.zip"), opciones({ sinCadena: true }));
+  const parcial = await sinCadena(leer("inventada.zip"));
   check("sin cadena, el veredicto es PARCIAL y nunca VERIFICADO", parcial.veredicto === "PARCIAL", parcial.veredicto);
 
-  const roto = await verificarEvidencia(Buffer.from("esto no es un zip"), opciones({ sinCadena: true }));
+  const roto = await sinCadena(Buffer.from("esto no es un zip"));
   check("un archivo que no es zip no rompe el programa", roto.veredicto === "NO_VERIFICA" && tiene(roto, "zip", "falla"));
 }
 
@@ -258,7 +281,7 @@ console.log("\n--- formato 2 (firma cruda) ---");
   check("la firma del paquete es la anclada on-chain", tiene(r, "firma.0.sighash", "ok"));
 
   // Positivo, SIN red: es lo nuevo — la firma se prueba igual.
-  const off = await verificarEvidencia(armar(m2()), opciones({ sinCadena: true }));
+  const off = await sinCadena(armar(m2()));
   check("sin cadena, la firma se verifica igual", tiene(off, "firma.0.recuperada", "ok") && off.veredicto === "PARCIAL", off.veredicto);
 
   // La firma es de otra wallet.
@@ -335,17 +358,7 @@ console.log("\n--- claves aportadas ---");
     },
   });
 
-  const conClaves = async (vars, zip = paquete, estado = cadenaConFirma) => {
-    const previas = { ...process.env };
-    for (const k of Object.keys(process.env)) if (k.startsWith("PK_SIGNER")) delete process.env[k];
-    Object.assign(process.env, vars);
-    try {
-      return await contra(estado, zip);
-    } finally {
-      for (const k of Object.keys(process.env)) if (k.startsWith("PK_SIGNER")) delete process.env[k];
-      Object.assign(process.env, previas);
-    }
-  };
+  const conClaves = (vars, zip = paquete, estado = cadenaConFirma) => contra(estado, zip, vars);
 
   const r = await conClaves({ PK_SIGNER1: w.privateKey });
   check("la clave del firmante lo confirma", r.veredicto === "VERIFICADO" && tiene(r, "clave.PK_SIGNER1", "ok"), r.veredicto);

@@ -28,7 +28,9 @@ import {
   ACCION_FIRMA,
   ACCION_REGISTRO,
   BYTES32_CERO,
+  RPC_TIMEOUT_MS,
   SCHEMA_DEFINICION,
+  TOLERANCIA_SEGUNDOS,
   cadenaDe,
   expectativas,
 } from "./config.js";
@@ -317,7 +319,7 @@ function chequearDocumento(c, zip, m) {
 // nada: recupera la dirección desde la firma cruda y la compara con la
 // declarada. Si da, esa wallet firmó ese mensaje, y no hay que creerle a la
 // cadena ni a sygners para saberlo.
-function chequearFirmasCrudas(c, m, opts) {
+function chequearFirmasCrudas(c, m) {
   const firmantes = Array.isArray(m.firmantes) ? m.firmantes : [];
   const chainId = Number(m?.cadena?.chainId);
 
@@ -456,11 +458,11 @@ function chequearFirmasCrudas(c, m, opts) {
     const declarada = fecha(f.firmadoEl);
     if (declarada && Number.isFinite(Number(msj.timestamp))) {
       const delta = Math.abs(seg(declarada) - Number(msj.timestamp));
-      c[delta <= opts.toleranciaSegundos ? "ok" : "aviso"](
+      c[delta <= TOLERANCIA_SEGUNDOS ? "ok" : "aviso"](
         "firmas",
         `firma.${i}.mensaje.fecha`,
         `${etiqueta}: la fecha que firmó y la registrada están cerca`,
-        delta <= opts.toleranciaSegundos
+        delta <= TOLERANCIA_SEGUNDOS
           ? `${new Date(Number(msj.timestamp) * 1000).toISOString()} (${delta}s)`
           : `El mensaje dice ${new Date(Number(msj.timestamp) * 1000).toISOString()} y el manifiesto registró ${f.firmadoEl}: ${delta}s de diferencia.`,
       );
@@ -557,10 +559,10 @@ function chequearClaves(c, m) {
 }
 
 // ── 4. La cadena ─────────────────────────────────────────────────────────────
-async function chequearCadena(c, m, opts) {
+async function chequearCadena(c, m) {
   const chainId = Number(m?.cadena?.chainId);
-  const cadena = cadenaDe(chainId, opts);
-  const esperado = expectativas(chainId, opts);
+  const cadena = cadenaDe(chainId);
+  const esperado = expectativas(chainId);
   const resultado = { cadena, atestaciones: {} };
 
   if (!cadena.conocida) {
@@ -599,7 +601,7 @@ async function chequearCadena(c, m, opts) {
     return resultado;
   }
 
-  const prov = proveedor(cadena, opts.timeoutMs);
+  const prov = proveedor(cadena, RPC_TIMEOUT_MS);
   try {
     const idNodo = await chainIdDelNodo(prov);
     if (idNodo !== chainId) {
@@ -768,7 +770,7 @@ async function chequearCadena(c, m, opts) {
     const declarada = fecha(f.firmadoEl);
     if (declarada && a.time) {
       const delta = Math.abs(seg(declarada) - a.time);
-      const dentro = delta <= opts.toleranciaSegundos;
+      const dentro = delta <= TOLERANCIA_SEGUNDOS;
       c[dentro ? "ok" : "aviso"](
         "firmas",
         `firma.${i}.fecha`,
@@ -781,7 +783,7 @@ async function chequearCadena(c, m, opts) {
   }
 
   // 4.3 Los recibos de transacción (opcional).
-  if (opts.verificarTx) {
+  {
     const pares = [
       ["registro", m?.cadena?.registroTxHash, "El registro"],
       ...firmantes.map((f, i) => [`firma.${i}`, f.txHash, f.email]),
@@ -812,8 +814,6 @@ async function chequearCadena(c, m, opts) {
         c.aviso("cadena", `${id}.tx`, `${quien}se pudo pedir el recibo`, e?.shortMessage ?? e?.message ?? String(e));
       }
     }
-  } else {
-    c.omitido("cadena", "tx", "Recibos de transacción", "VERIFICAR_TX=false");
   }
 
   return resultado;
@@ -927,7 +927,7 @@ export async function verificarEvidencia(bytes, opts) {
   // Las firmas se verifican SIN red: desde el formato 2, un paquete prueba por
   // sí solo que esas wallets firmaron: recuperar la dirección no necesita la
   // cadena, solo la firma y el mensaje.
-  chequearFirmasCrudas(c, m, opts);
+  chequearFirmasCrudas(c, m);
   chequearClaves(c, m);
 
   // Lo simulado se detecta SIN red, y antes de tocarla: si el paquete salió de
@@ -949,7 +949,7 @@ export async function verificarEvidencia(bytes, opts) {
   } else if (sim.simulado) {
     c.omitido("cadena", "cadena", "Cotejo contra la cadena", "No se consulta: los identificadores son simulados.");
   } else {
-    cadena = await chequearCadena(c, m, opts);
+    cadena = await chequearCadena(c, m);
   }
 
   return armarResultado(c, { opts, zip, manifiesto: m, simulado: sim, hashCalculado, cadena });
@@ -959,16 +959,14 @@ function armarResultado(c, ctx) {
   const fallas = c.cuenta("falla");
   const avisos = c.cuenta("aviso");
   const omitidos = c.cuenta("omitido");
-  const estrictoFalla = ctx.opts.estricto && avisos > 0;
-
   let veredicto;
-  if (fallas > 0 || estrictoFalla) veredicto = ctx.simulado?.simulado ? "SIMULADO" : "NO_VERIFICA";
+  if (fallas > 0) veredicto = ctx.simulado?.simulado ? "SIMULADO" : "NO_VERIFICA";
   else if (ctx.opts.sinCadena) veredicto = "PARCIAL";
   else veredicto = "VERIFICADO";
 
   const m = ctx.manifiesto;
   const cadenaId = Number(m?.cadena?.chainId);
-  const cfg = Number.isFinite(cadenaId) ? cadenaDe(cadenaId, ctx.opts) : null;
+  const cfg = Number.isFinite(cadenaId) ? cadenaDe(cadenaId) : null;
 
   return {
     veredicto,

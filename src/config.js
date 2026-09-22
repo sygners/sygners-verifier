@@ -5,7 +5,7 @@
 // existen para que el verificador funcione recién descargado; las variables,
 // para que nadie tenga que confiar en ellos.
 
-import { env, envBool, envNum } from "./env.js";
+import { env, envBool } from "./env.js";
 
 // Direcciones oficiales de EAS (docs.attest.org). En las cadenas OP-stack son
 // predeploys y por eso se repiten.
@@ -81,37 +81,28 @@ export const CADENAS = {
 
 // La definición del schema con la que sygners ancla registro y firmas.
 export const SCHEMA_DEFINICION =
-  env("SYGNERS_SCHEMA_DEFINICION") ??
   "bytes32 documentHash,string action,string email,address subject,bytes32 sigHash";
 
 export const ACCION_REGISTRO = "REGISTER";
 export const ACCION_FIRMA = "SIGN";
 export const BYTES32_CERO = `0x${"00".repeat(32)}`;
 
-// Opciones globales, tomadas del entorno y pisables por la línea de comandos.
-export function opciones(flags = {}) {
-  return {
-    sinCadena: flags.sinCadena ?? envBool("SIN_CADENA", false),
-    verificarTx: flags.verificarTx ?? envBool("VERIFICAR_TX", true),
-    estricto: flags.estricto ?? envBool("ESTRICTO", false),
-    toleranciaSegundos: flags.toleranciaSegundos ?? envNum("TOLERANCIA_FECHA_SEGUNDOS", 3600),
-    timeoutMs: flags.timeoutMs ?? envNum("RPC_TIMEOUT_MS", 20000),
-    // Las expectativas se resuelven por cadena (ver `expectativas`): quien
-    // corre varios entornos —producción en una red, preproducción en otra—
-    // tiene un schema y un relayer distintos en cada una, y un único valor
-    // global haría fallar al otro entorno por una diferencia esperada.
-    schemaUidFlag: flags.schemaUid ?? null,
-    attesterFlag: flags.attester ?? null,
-    rpcForzado: flags.rpc ?? null,
-  };
+// Lo único que se ajusta: si se toca la red o no. Todo lo demás son constantes,
+// porque un verificador con perillas es un verificador cuyo resultado depende de
+// cómo lo corriste.
+export const TOLERANCIA_SEGUNDOS = 3600;
+export const RPC_TIMEOUT_MS = 20000;
+
+export function opciones() {
+  return { sinCadena: envBool("SIN_CADENA", false) };
 }
 
 // Qué se le exige a las atestaciones de ESTA cadena. Precedencia: la línea de
 // comandos, después `<VARIABLE>_<chainId>`, y al final la variable sin sufijo.
-export function expectativas(chainId, opts = {}) {
+export function expectativas(chainId) {
   return {
-    schemaUid: opts.schemaUidFlag ?? env(`EAS_SCHEMA_UID_${chainId}`) ?? env("EAS_SCHEMA_UID") ?? null,
-    attester: opts.attesterFlag ?? env(`SYGNERS_ATTESTER_${chainId}`) ?? env("SYGNERS_ATTESTER") ?? null,
+    schemaUid: env(`EAS_SCHEMA_UID_${chainId}`) ?? env("EAS_SCHEMA_UID") ?? null,
+    attester: env(`SYGNERS_ATTESTER_${chainId}`) ?? env("SYGNERS_ATTESTER") ?? null,
   };
 }
 
@@ -121,14 +112,9 @@ export function expectativas(chainId, opts = {}) {
 // que sygners lo guarda por documento: una operación vive en la red donde se
 // ancló, y verificar contra la red de hoy rechazaría todo lo anterior a un
 // cambio de red.
-export function cadenaDe(chainId, opts = {}) {
+export function cadenaDe(chainId) {
   const base = CADENAS[chainId] ?? null;
-  const rpcUrl =
-    opts.rpcForzado ??
-    env(`RPC_URL_${chainId}`) ??
-    env("RPC_URL") ??
-    base?.rpc ??
-    null;
+  const rpcUrl = env(`RPC_URL_${chainId}`) ?? env("RPC_URL") ?? base?.rpc ?? null;
   return {
     chainId,
     nombre: base?.nombre ?? `cadena ${chainId}`,
@@ -137,7 +123,7 @@ export function cadenaDe(chainId, opts = {}) {
     // cuestan nada de producir y la red puede reiniciarse entera.
     prueba: Boolean(base?.prueba),
     rpcUrl,
-    rpcPropio: Boolean(opts.rpcForzado || env(`RPC_URL_${chainId}`) || env("RPC_URL")),
+    rpcPropio: Boolean(env(`RPC_URL_${chainId}`) || env("RPC_URL")),
     eas: env(`EAS_CONTRACT_ADDRESS_${chainId}`) ?? env("EAS_CONTRACT_ADDRESS") ?? base?.eas ?? null,
     registry:
       env(`SCHEMA_REGISTRY_ADDRESS_${chainId}`) ??
