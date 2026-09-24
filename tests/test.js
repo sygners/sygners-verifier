@@ -224,6 +224,34 @@ for (const [label, state, zip, extra, expectedId] of cases) {
         r.checks.filter((c) => c.state === "fail").map((c) => c.id).join(", "));
 }
 
+// ── 3b. The document named like one of the package's own files ───────────────
+//
+// A real case: a document called LEEME.txt. Whoever builds the zip writes both
+// under the same entry, the fixed file wins, and the signed document is not in
+// the package at all.
+console.log("\n--- name collision ---");
+{
+  const m = manifest();
+  m.documento.nombreArchivo = "LEEME.txt";
+  const collided = zipSync(
+    {
+      "constancia.pdf": [strToU8("%PDF-1.7\n%%EOF\n"), { level: 0 }],
+      "manifiesto.json": [strToU8(JSON.stringify(m, null, 2)), { level: 0 }],
+      // The document would have gone here and the package's own README
+      // overwrote it.
+      "LEEME.txt": [strToU8(`Tiene que dar:\n  ${m.documento.hash}\n`), { level: 0 }],
+    },
+    { level: 0 },
+  );
+  const r = await against(chainState(), collided);
+  check("a document named like a package file does not verify", r.verdict === "FAILED", r.verdict);
+  check("   and the report explains the collision",
+        r.checks.find((c) => c.id === "package.document")?.detail?.includes("LEEME.txt"));
+  check("   and the hash check says why there is nothing to hash",
+        r.checks.find((c) => c.id === "document.hash")?.detail?.includes("took its place"));
+  check("   while the on-chain anchoring still checks out", has(r, "registration.hash", "ok"));
+}
+
 // ── 4. Wrong network ─────────────────────────────────────────────────────────
 console.log("\n--- wrong network ---");
 {

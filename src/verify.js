@@ -97,7 +97,7 @@ const date = (v) => {
 const secs = (d) => Math.floor(d.getTime() / 1000);
 
 // ── 1. Package structure ─────────────────────────────────────────────────────
-function checkStructure(c, zip) {
+function checkStructure(c, zip, m) {
   const missing = [MANIFEST_NAME, CERTIFICATE_NAME, README_NAME].filter(
     (n) => !zip.files.includes(n),
   );
@@ -113,7 +113,21 @@ function checkStructure(c, zip) {
   if (zip.documentCandidates.length === 1) {
     c.ok("package", "package.document", "There is exactly one document inside", zip.documentName);
   } else if (zip.documentCandidates.length === 0) {
-    c.fail("package", "package.document", "There is exactly one document inside", "There is none.");
+    // The most useful case to name out loud: the document was called like one
+    // of the package's own files. Whoever built the zip wrote both under the
+    // same entry, the fixed one won, and the signed document is simply not
+    // here. Saying "there is none" without this would send the reader looking
+    // for a corrupt zip.
+    const declared = m?.documento?.nombreArchivo;
+    const collides = declared && [MANIFEST_NAME, CERTIFICATE_NAME, README_NAME].includes(declared);
+    c.fail(
+      "package",
+      "package.document",
+      "There is exactly one document inside",
+      collides
+        ? `There is none. The manifest says the document is called "${declared}", which is one of the names the package itself uses (${MANIFEST_NAME}, ${CERTIFICATE_NAME}, ${README_NAME}): when the zip was built both went under the same entry and the package's own file won, so the signed document is NOT in here. The rest of the evidence may still check out, but the file this package exists to carry is gone — and sygners deletes its copy after the expiry date.`
+        : "There is none.",
+    );
   } else {
     c.fail(
       "package",
@@ -261,7 +275,16 @@ function checkManifest(c, m) {
 // ── 3. The document against what the manifest declares ───────────────────────
 function checkDocument(c, zip, m) {
   if (!zip.document) {
-    c.fail("document", "document.hash", "The document is the one that was anchored", "There is no document to hash.");
+    const declared = m?.documento?.nombreArchivo;
+    const collides = declared && [MANIFEST_NAME, CERTIFICATE_NAME, README_NAME].includes(declared);
+    c.fail(
+      "document",
+      "document.hash",
+      "The document is the one that was anchored",
+      collides
+        ? `There is no document to hash: it was named "${declared}" and the package's own file of that name took its place.`
+        : "There is no document to hash.",
+    );
     return null;
   }
   const computed = sha256Hex(zip.document);
@@ -930,7 +953,7 @@ export async function verifyEvidence(bytes, opts) {
     return buildResult(c, { opts, zip: null, manifest: null, mock: { mock: false, reasons: [] } });
   }
 
-  checkStructure(c, zip);
+  checkStructure(c, zip, zip.manifest);
 
   const m = zip.manifest;
   if (!m) {
