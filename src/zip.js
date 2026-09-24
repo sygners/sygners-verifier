@@ -1,60 +1,62 @@
-// Apertura del .zip de evidencia.
+// Opening the evidence .zip.
 //
-// Reimplementa `leerArchivoDeEvidencia` de sygners con una diferencia que es
-// todo el punto de este programa: acá NADA tira excepción por estar incompleto.
-// Un zip al que le falta el manifiesto no es un error del verificador, es un
-// hallazgo del verificador — y tiene que llegar al informe como tal, junto con
-// el resto de los chequeos.
+// This reimplements sygners' `leerArchivoDeEvidencia` with one difference that
+// is the whole point of this program: NOTHING here throws because something is
+// missing. A zip without a manifest is not an error of the verifier, it is a
+// finding of the verifier — and it has to reach the report as such, alongside
+// every other check.
 
 import { unzipSync, strFromU8 } from "fflate";
 
-export const NOMBRE_CONSTANCIA = "constancia.pdf";
-export const NOMBRE_MANIFIESTO = "manifiesto.json";
-export const NOMBRE_LEEME = "LEEME.txt";
+// The names sygners writes inside the package. They are data, not prose: they
+// stay exactly as the platform produces them.
+export const CERTIFICATE_NAME = "constancia.pdf";
+export const MANIFEST_NAME = "manifiesto.json";
+export const README_NAME = "LEEME.txt";
 
-export function abrirEvidencia(bytes) {
-  let contenido;
+export function openEvidence(bytes) {
+  let entries;
   try {
-    contenido = unzipSync(new Uint8Array(bytes));
+    entries = unzipSync(new Uint8Array(bytes));
   } catch (e) {
-    return { ok: false, error: `No se pudo abrir el .zip: ${e?.message ?? e}` };
+    return { ok: false, error: `Could not open the .zip: ${e?.message ?? e}` };
   }
 
-  const archivos = Object.keys(contenido);
-  const conocidos = new Set([NOMBRE_CONSTANCIA, NOMBRE_MANIFIESTO, NOMBRE_LEEME]);
-  // Cualquier entrada que no sea una de las tres fijas es "el documento".
-  // Directorios y archivos de basura de macOS (`__MACOSX/`, `.DS_Store`) no
-  // cuentan: un zip reempaquetado a mano los trae y no son el documento.
-  const candidatos = archivos.filter(
+  const files = Object.keys(entries);
+  const known = new Set([CERTIFICATE_NAME, MANIFEST_NAME, README_NAME]);
+  // Any entry that is not one of the three fixed ones is "the document".
+  // Directories and macOS junk (`__MACOSX/`, `.DS_Store`) do not count: a zip
+  // repacked by hand brings them and they are not the document.
+  const candidates = files.filter(
     (n) =>
-      !conocidos.has(n) &&
+      !known.has(n) &&
       !n.endsWith("/") &&
       !n.startsWith("__MACOSX/") &&
       !n.split("/").pop().startsWith("."),
   );
 
-  let manifiesto = null;
-  let errorManifiesto = null;
-  if (contenido[NOMBRE_MANIFIESTO]) {
+  let manifest = null;
+  let manifestError = null;
+  if (entries[MANIFEST_NAME]) {
     try {
-      manifiesto = JSON.parse(strFromU8(contenido[NOMBRE_MANIFIESTO]));
+      manifest = JSON.parse(strFromU8(entries[MANIFEST_NAME]));
     } catch (e) {
-      errorManifiesto = `El manifiesto no es JSON válido: ${e?.message ?? e}`;
+      manifestError = `The manifest is not valid JSON: ${e?.message ?? e}`;
     }
   } else {
-    errorManifiesto = `El .zip no trae ${NOMBRE_MANIFIESTO}.`;
+    manifestError = `The .zip does not contain ${MANIFEST_NAME}.`;
   }
 
   return {
     ok: true,
-    archivos,
-    candidatosDocumento: candidatos,
-    nombreDocumento: candidatos.length === 1 ? candidatos[0] : null,
-    documento: candidatos.length === 1 ? contenido[candidatos[0]] : null,
-    pdf: contenido[NOMBRE_CONSTANCIA] ?? null,
-    leeme: contenido[NOMBRE_LEEME] ? strFromU8(contenido[NOMBRE_LEEME]) : null,
-    manifiestoCrudo: contenido[NOMBRE_MANIFIESTO] ?? null,
-    manifiesto,
-    errorManifiesto,
+    files,
+    documentCandidates: candidates,
+    documentName: candidates.length === 1 ? candidates[0] : null,
+    document: candidates.length === 1 ? entries[candidates[0]] : null,
+    pdf: entries[CERTIFICATE_NAME] ?? null,
+    readme: entries[README_NAME] ? strFromU8(entries[README_NAME]) : null,
+    rawManifest: entries[MANIFEST_NAME] ?? null,
+    manifest,
+    manifestError,
   };
 }

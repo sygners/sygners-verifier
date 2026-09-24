@@ -1,41 +1,41 @@
-// Lectura de EAS por RPC: las atestaciones y el schema, tal como están en la
-// cadena, sin pasar por ningún servicio de sygners ni por easscan.
+// Reading EAS over RPC: the attestations and the schema, as they are on chain,
+// going through no sygners service and no easscan.
 //
-// Solo se usan llamadas `eth_call` y `eth_getTransactionReceipt`, que cualquier
-// nodo público sirve: no hace falta un nodo de archivo ni una API key.
+// Only `eth_call` and `eth_getTransactionReceipt` are used, which any public
+// node serves: no archive node and no API key needed.
 
 import { Contract, FetchRequest, JsonRpcProvider, AbiCoder, getAddress } from "ethers";
 
-const ABI_EAS = [
+const EAS_ABI = [
   "function getAttestation(bytes32 uid) view returns (tuple(bytes32 uid, bytes32 schema, uint64 time, uint64 expirationTime, uint64 revocationTime, bytes32 refUID, address recipient, address attester, bool revocable, bytes data))",
 ];
 
-const ABI_REGISTRY = [
+const REGISTRY_ABI = [
   "function getSchema(bytes32 uid) view returns (tuple(bytes32 uid, address resolver, bool revocable, string schema))",
 ];
 
-// Los tipos del schema de sygners, en orden. Es lo que `SchemaEncoder` codifica
-// y, por lo tanto, lo que hay que decodificar: ABI estándar, nada propietario.
-const TIPOS = ["bytes32", "string", "string", "address", "bytes32"];
+// The types of sygners' schema, in order. It is what `SchemaEncoder` encodes
+// and therefore what has to be decoded: plain ABI, nothing proprietary.
+const TYPES = ["bytes32", "string", "string", "address", "bytes32"];
 
-export function proveedor(cadena, timeoutMs) {
-  const req = new FetchRequest(cadena.rpcUrl);
+export function provider(chain, timeoutMs) {
+  const req = new FetchRequest(chain.rpcUrl);
   req.timeout = timeoutMs;
-  // Sin red fijada a propósito: queremos PREGUNTARLE el chainId al nodo y
-  // compararlo con el del manifiesto, no dárselo por hecho.
+  // No network pinned on purpose: we want to ASK the node for its chain id and
+  // compare it with the manifest's, not take it for granted.
   return new JsonRpcProvider(req, undefined, { polling: false, staticNetwork: false });
 }
 
-export async function chainIdDelNodo(prov) {
-  const red = await prov.getNetwork();
-  return Number(red.chainId);
+export async function nodeChainId(prov) {
+  const net = await prov.getNetwork();
+  return Number(net.chainId);
 }
 
-export async function leerAtestacion(prov, cadena, uid) {
-  const eas = new Contract(cadena.eas, ABI_EAS, prov);
+export async function readAttestation(prov, chain, uid) {
+  const eas = new Contract(chain.eas, EAS_ABI, prov);
   const a = await eas.getAttestation(uid);
-  const vacia = a.schema === `0x${"00".repeat(32)}` && a.time === 0n;
-  if (vacia) return null;
+  const empty = a.schema === `0x${"00".repeat(32)}` && a.time === 0n;
+  if (empty) return null;
   return {
     uid: a.uid,
     schema: a.schema,
@@ -50,33 +50,33 @@ export async function leerAtestacion(prov, cadena, uid) {
   };
 }
 
-// Decodifica el payload de la atestación al schema de sygners. Si los bytes no
-// corresponden a ese schema, devuelve el error en vez de tirar: es un hallazgo.
-export function decodificarDatos(data) {
+// Decodes the attestation payload with sygners' schema. If the bytes do not
+// match that schema it returns the error instead of throwing: that is a finding.
+export function decodeData(data) {
   try {
     const [documentHash, action, email, subject, sigHash] =
-      AbiCoder.defaultAbiCoder().decode(TIPOS, data);
+      AbiCoder.defaultAbiCoder().decode(TYPES, data);
     return { ok: true, documentHash, action, email, subject: getAddress(subject), sigHash };
   } catch (e) {
     return { ok: false, error: e?.message ?? String(e) };
   }
 }
 
-export async function leerSchema(prov, cadena, uid) {
-  const reg = new Contract(cadena.registry, ABI_REGISTRY, prov);
+export async function readSchema(prov, chain, uid) {
+  const reg = new Contract(chain.registry, REGISTRY_ABI, prov);
   const s = await reg.getSchema(uid);
   if (s.uid === `0x${"00".repeat(32)}`) return null;
   return { uid: s.uid, resolver: s.resolver, revocable: s.revocable, schema: s.schema };
 }
 
-export async function leerRecibo(prov, hash) {
+export async function readReceipt(prov, hash) {
   const r = await prov.getTransactionReceipt(hash);
   if (!r) return null;
   return { hash: r.hash, status: r.status, to: r.to, blockNumber: r.blockNumber };
 }
 
-// Normaliza una dirección para comparar. Devuelve null si no es una dirección.
-export function dir(a) {
+// Normalizes an address for comparison. Returns null if it is not an address.
+export function addr(a) {
   try {
     return getAddress(String(a));
   } catch {

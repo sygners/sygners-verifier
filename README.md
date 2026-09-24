@@ -1,93 +1,95 @@
 # sygners-verifier
 
-Verifica los archivos de evidencia `.zip` de [sygners](https://github.com/sygners/sygners)
-**sin depender de la plataforma**: las únicas fuentes son el zip y un nodo RPC
-de la cadena que el propio manifiesto declara.
+Verifies [sygners](https://github.com/sygners/sygners) `.zip` evidence files
+**without depending on the platform**: the only sources are the zip and an RPC
+node of the chain the manifest itself declares.
 
 ```bash
 npm install
-cp .env.example .env     # opcional, pero recomendado
-node src/cli.js evidencia.zip
+cp .env.example .env     # optional, but recommended
+node src/cli.js evidence.zip
 ```
 
-Un solo argumento. Todo lo que se ajusta vive en el `.env`.
+One argument. Everything that can be tuned lives in the `.env`.
 
-La salida es un informe estructurado por sujeto, con cada chequeo acompañado del
-dato con el que se resolvió:
+The output is a report structured by subject, each check accompanied by the
+value it was resolved with:
 
 ```
- Veredicto    VERIFICA
- Chequeos     42 ok · 0 fallas · 2 avisos · 0 omitidos
+ Verdict      VERIFIED
+ Checks       42 ok · 0 failed · 2 warnings · 0 skipped
 
- 1. PAQUETE                      piezas del zip y forma del manifiesto
- 2. DOCUMENTO                    el SHA-256 y lo que el manifiesto declara
- 3. ANCLAJE EN LA CADENA         registro, schema, atestador, transacción
- 4. ESQUEMA DE FIRMA (EIP-712)   dominio y tipos
- 5. FIRMANTE 1 DE N — email      todo lo suyo junto: manifiesto, firma y cadena
- 6. CLAVES PRIVADAS              qué confirmó cada una, o que no se aportaron
- RESULTADO                       veredicto, fallas y avisos
+ 1. PACKAGE                      zip pieces and manifest shape
+ 2. DOCUMENT                     the SHA-256 and what the manifest declares
+ 3. ANCHORING ON CHAIN           registration, schema, attester, transaction
+ 4. SIGNING SCHEME (EIP-712)     domain and types
+ 5. SIGNER 1 OF N — email        everything about them: manifest, signature, chain
+ 6. SIGNERS' PRIVATE KEYS        what each one confirmed, or that none were given
+ RESULT                          verdict, failures and warnings
 ```
 
-## Qué comprueba
+## What it checks
 
-**Sin tocar la red**
+**Without touching the network**
 
-- El zip trae el documento, `constancia.pdf`, `manifiesto.json` y `LEEME.txt`.
-- El manifiesto es válido, de formato conocido (`1` o `2`), coherente en fechas
-  y con todos los firmantes en `SIGNED`.
-- **El SHA-256 del documento es el que declara el manifiesto.**
-- **Las firmas EIP-712** (`formato: 2`): de cada firma cruda se recupera quién
-  la produjo y tiene que dar la wallet declarada; el mensaje firmado tiene que
-  decir el hash de *este* documento, *esta* operación, ese correo y la
-  declaración de sygners. El dominio EIP-712 del paquete se verifica, no se usa
-  a ciegas.
-- Que la evidencia no sea **simulada**: sin cadena configurada, sygners genera
-  UIDs deterministas que se pueden recalcular acá.
+- The zip carries the document, `constancia.pdf`, `manifiesto.json` and
+  `LEEME.txt`.
+- The manifest is valid, of a known format (`1` or `2`), coherent in its dates
+  and with every signer `SIGNED`.
+- **The document's SHA-256 is the one the manifest declares.**
+- **The EIP-712 signatures** (`formato: 2`): from each raw signature it recovers
+  who produced it, which has to be the declared wallet; the signed message has
+  to state the hash of *this* document, *this* operation, that email and
+  sygners' statement. The package's EIP-712 domain is verified, not used blindly.
+- That the evidence is not **mock**: with no chain configured, sygners generates
+  deterministic UIDs that can be recomputed here.
 
-**Contra la cadena**
+**Against the chain**
 
-- El nodo declara el mismo `chainId` que el manifiesto, o no se coteja nada.
-- El **registro** existe, no está revocado, y dice el mismo hash, `REGISTER`, y
-  el correo y la wallet del emisor.
-- **Cada firma** existe, dice `SIGN`, sobre el mismo hash, con el correo y la
-  wallet de ese firmante, referenciando (`refUID`) al registro.
-- **La huella anclada es la de la firma que trae el paquete**
-  (`keccak256(firma) == sigHash`): ata la firma verificable a lo que quedó en
-  la cadena.
-- El schema on-chain es textualmente el de sygners, leído del SchemaRegistry.
-- Las transacciones existen, salieron bien y fueron al contrato de EAS.
-- Si configuraste `SYGNERS_ATTESTER` y `EAS_SCHEMA_UID`, que sean esos.
-- Si la cadena es una red de prueba, lo avisa.
+- The node declares the same `chainId` as the manifest, or nothing is
+  cross-checked.
+- The **registration** exists, is not revoked, and states the same hash,
+  `REGISTER`, and the issuer's email and wallet.
+- **Each signature** exists, says `SIGN`, over the same hash, with that signer's
+  email and wallet, referencing (`refUID`) the registration.
+- **The anchored fingerprint is the one of the signature in the package**
+  (`keccak256(signature) == sigHash`): it ties the verifiable signature to what
+  was written on chain.
+- The on-chain schema is textually sygners', read from the SchemaRegistry.
+- The transactions exist, succeeded and went to the EAS contract.
+- If you configured `SYGNERS_ATTESTER` and `EAS_SCHEMA_UID`, that they are those.
+- If the chain is a test network, it warns.
 
-**Quién controla cada wallet** (`PK_SIGNER*`, opcional)
+**Who controls each wallet** (`PK_SIGNER*`, optional)
 
-Si te entregan la clave privada de un firmante, de cada una se deriva la
-dirección y se busca entre las wallets del paquete. La clave nunca firma nada ni
-aparece en la salida, y acredita **control de la wallet, no identidad**.
+If you are handed a signer's private key, each one's address is derived and
+looked up among the package's wallets. The key never signs anything and never
+appears in the output, and it establishes **control of the wallet, not
+identity**.
 
-Si no se aporta ninguna, el informe **lo avisa** y nombra a los firmantes que
-quedaron sin confirmar: el paquete prueba que ciertas wallets firmaron, no quién
-las controla hoy, y un `VERIFICA` a secas se lee como si probara las dos cosas.
+If none is provided, the report **says so** and names the signers left
+unconfirmed: the package proves that certain wallets signed, not who controls
+them today, and a bare `VERIFIED` reads as if it proved both.
 
-## Veredictos
+## Verdicts
 
-| veredicto | salida | |
+| verdict | exit | |
 |---|---|---|
-| `VERIFICA` | 0 | el documento es el anclado y la cadena lo confirma |
-| `VERIFICA PARCIALMENTE` | 0 | con `SIN_CADENA=true`: sin cotejar contra la red |
-| `EVIDENCIA SIMULADA` | 1 | salió de una instancia sin cadena: no prueba nada |
-| `NO VERIFICA` | 1 | falló un chequeo bloqueante |
+| `VERIFIED` | 0 | the document is the anchored one and the chain confirms it |
+| `PARTIALLY VERIFIED` | 0 | with `OFFLINE=true`: not cross-checked against the network |
+| `MOCK EVIDENCE` | 1 | came from an instance with no chain: it proves nothing |
+| `DOES NOT VERIFY` | 1 | a blocking check failed |
 
-## Configuración
+## Configuration
 
-Todo en `.env` (ver `.env.example`): `RPC_URL_<chainId>`, `EAS_SCHEMA_UID`,
-`SYGNERS_ATTESTER[_<chainId>]`, `PK_SIGNER*`, `SIN_CADENA` y, para cadenas que
-no estén en la tabla, `EAS_CONTRACT_ADDRESS_<chainId>` y
+All in `.env` (see `.env.example`): `RPC_URL_<chainId>`, `EAS_SCHEMA_UID`,
+`SYGNERS_ATTESTER[_<chainId>]`, `PK_SIGNER*`, `OFFLINE` and, for chains not in
+the table, `EAS_CONTRACT_ADDRESS_<chainId>` and
 `SCHEMA_REGISTRY_ADDRESS_<chainId>`.
 
-Cadenas conocidas: Ethereum (1), Sepolia (11155111), OP Mainnet (10), OP Sepolia
-(11155420), Base (8453), Base Sepolia (84532), Arbitrum One (42161) y
-Polygon (137). Para la sygners de producción alcanza con:
+Known chains: Ethereum (1), Sepolia (11155111), OP Mainnet (10), OP Sepolia
+(11155420), Base (8453), Base Sepolia (84532), Arbitrum One (42161) and
+Polygon (137). For sygners production this is enough:
 
 ```bash
 RPC_URL_10=https://mainnet.optimism.io
@@ -96,13 +98,18 @@ EAS_SCHEMA_UID=0xcc6fea68545dd0ab10a1cd630ccf0f63cba74c819c3b334a22d2d1e15468dc5
 SYGNERS_ATTESTER_10=0x8ad3446c381c3df420Bba1A1329F71484e7a31D8
 ```
 
-## Desarrollo
+## Development
 
 ```bash
-npm run fixtures   # arma pruebas/fixtures/*.zip
-npm run prueba     # 54 chequeos, sin red y sin sygners (nodo JSON-RPC falso)
+npm run fixtures   # builds tests/fixtures/*.zip
+npm test           # 55 checks, no network and no sygners (fake JSON-RPC node)
 ```
 
-`src/verificar.js` tiene los chequeos; `src/eas.js` lee la cadena;
-`src/firma.js` las firmas EIP-712; `src/claves.js` las claves aportadas.
-Dependencias: `ethers` y `fflate`.
+`src/verify.js` holds the checks; `src/eas.js` reads the chain;
+`src/signature.js` the EIP-712 signatures; `src/keys.js` the provided keys.
+Dependencies: `ethers` and `fflate`.
+
+> The manifest's field names (`documento`, `firmantes`, `cadena`…) and the
+> signed statement stay in Spanish everywhere in the code: they are data written
+> by sygners, not prose. Renaming them would stop reading the file, and
+> translating the statement would break every signature.
